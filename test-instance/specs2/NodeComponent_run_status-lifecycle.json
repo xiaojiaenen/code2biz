@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "NodeComponent.run_status 状态机",
+    "quality_profile": "showcase",
+    "subtitle": "运行态独立于安装态，供监控看板直接消费。"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主流程"
+    },
+    {
+      "id": "terminal",
+      "label": "终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "unknown",
+      "type": "start",
+      "label": "unknown",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "running",
+      "type": "active",
+      "label": "running",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "stopped",
+      "type": "active",
+      "label": "stopped",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "error",
+      "type": "failure",
+      "label": "error",
+      "lane": "terminal",
+      "col": 0
+    }
+  ],
+  "transitions": [
+    {
+      "from": "unknown",
+      "to": "running",
+      "label": "周期性检测",
+      "route": "straight",
+      "labelAt": [
+        192,
+        205
+      ]
+    },
+    {
+      "from": "unknown",
+      "to": "stopped",
+      "route": "top-channel",
+      "labelAt": [
+        248,
+        320
+      ]
+    },
+    {
+      "from": "unknown",
+      "to": "error",
+      "route": "drop",
+      "channelY": 340
+    },
+    {
+      "from": "running",
+      "to": "stopped",
+      "route": "straight",
+      "labelAt": [
+        325,
+        122
+      ]
+    },
+    {
+      "from": "running",
+      "to": "error",
+      "route": "drop",
+      "channelY": 380
+    },
+    {
+      "from": "stopped",
+      "to": "running",
+      "route": "straight",
+      "labelAt": [
+        325,
+        222
+      ]
+    },
+    {
+      "from": "stopped",
+      "to": "error",
+      "route": "drop",
+      "channelY": 340
+    },
+    {
+      "from": "error",
+      "to": "running",
+      "via": [
+        [
+          248,
+          479
+        ],
+        [
+          248,
+          240
+        ]
+      ],
+      "toSide": "bottom"
+    },
+    {
+      "from": "error",
+      "to": "stopped",
+      "route": "straight"
+    }
+  ]
+}

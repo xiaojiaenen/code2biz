@@ -1,0 +1,83 @@
+{
+  "_meta": {
+    "repo": "/Users/xiaojia/code/Russh",
+    "generatedAt": "2026-09-01T23:28:00+08:00",
+    "phase": "Phase 1-6 贯穿 / 人工确认层",
+    "principle": "代码里检测到但无法从代码本身确定业务动机/正确性的地方，一律进这里，绝不由模型编一个听起来合理的解释填进正式文档",
+    "reviewer": "建议交给熟悉部署与授权两块的老工程师过一遍"
+  },
+  "items": [
+    {
+      "id": "P-01",
+      "severity": "high",
+      "title": "installing / install_failed 两个状态疑似已废弃",
+      "evidence": "backend/models/component.py:43 声明枚举 not_installed|installing|installed|install_failed；但全库 grep 未找到任何对 installing / install_failed 的赋值点。status_checker.py:5 注释称『installing / install_failed 由部署器设置』，然而 core/deploy_executor.py 中未见写入。",
+      "question": "这两个状态是当前还在用，还是历史遗留？如果部署器从不写 installing，那么 status_checker.py:584 那道『不覆盖 installing』的并发保护就是永远不触发的死代码。",
+      "impact": "若确已废弃，文档应按实际生效的 2 态（not_installed/installed）描述，否则新人会去一个不存在的状态上找 bug。"
+    },
+    {
+      "id": "P-02",
+      "severity": "high",
+      "title": "install_status 会产出枚举外的 unknown 值",
+      "evidence": "backend/core/status_checker.py:526 与 :701 写 result['install_status'] = 'unknown'，但 models/component.py:43 的枚举里没有 unknown。",
+      "question": "这是有意为之（检测失败的哨兵值）还是漏改？第 584 行明确排除了 unknown 不写库，说明作者知道这个值不该落库——那它是否应该在类型层面被收口？",
+      "impact": "读代码的人会按枚举去穷举分支，遇到 unknown 会以为不可能。文档若不标注，排查时容易漏判。"
+    },
+    {
+      "id": "P-03",
+      "severity": "high",
+      "title": "partial 状态没有自动回滚 / 补偿路径",
+      "evidence": "deploy_executor.py 中 any_failed 后直接 break 并定终态，全库搜索未发现针对已成功步骤的补偿、回滚或清理逻辑。",
+      "question": "业务上是否接受\"装了一半就停着\"？是否有运维 SOP 要求人工清理残留（比如已格式化的磁盘、已写入的配置）？",
+      "impact": "这直接决定了 partial 的处置手册该怎么写。如果确实无自动回滚，文档必须把\"人工清理清单\"作为强制步骤写出来，否则重试可能污染环境。"
+    },
+    {
+      "id": "P-04",
+      "severity": "medium",
+      "title": "重试跳过已成功步骤时不校验该步骤的时效性",
+      "evidence": "deploy_executor.py:268 仅判断 step_record.status == 'success' 就跳过，未比较 finished_at 与当前环境状态。",
+      "question": "如果上次成功后发生了节点重装、磁盘清空或组件被手工卸载，重试会错误地跳过这些步骤。业务上是否接受？是否需要按时间间隔或环境校验加一道闸？",
+      "impact": "影响重试的可靠性预期，文档里描述重试行为时不能简单说\"安全\"。"
+    },
+    {
+      "id": "P-05",
+      "severity": "low",
+      "title": "_CACHE_TTL_SECONDS = 5.0 的具体取值动机",
+      "evidence": "backend/middleware/license_check.py:28 硬编码 5.0，注释只说明了机制未说明为何是 5 秒。",
+      "question": "5 秒是压测得出的、还是拍脑袋定的？在并发量大的部署里，5 秒是否会造成可感知的\"刚激活却仍被拦\"？",
+      "impact": "文档可以写机制，但不宜替业务方解释这个数字的合理性。"
+    },
+    {
+      "id": "P-06",
+      "severity": "medium",
+      "title": "全库使用 naive datetime（utcnow），存在时区隐患",
+      "evidence": "backend/models/deploy.py:7-9 注释自述：『datetime 使用 utcnow()(naive datetime)。未来应迁移到 timezone-aware 以避免时区歧义，但本次改动为避免迁移问题保持现状。』",
+      "question": "跨时区部署时，started_at / finished_at / expires_at 的比较是否出过问题？迁移到 timezone-aware 是否在排期内？",
+      "impact": "这是作者已知的债。文档应如实标注为已知限制，而不是默认时间处理是正确的。"
+    },
+    {
+      "id": "P-07",
+      "severity": "high",
+      "title": "入口点 38 条全部未人工复核",
+      "evidence": "test-instance/extraction/entry-points.json 中 38 条 status 全为 unreviewed；check-entry-coverage.mjs 报覆盖率 0.0%（0/38），明确输出『不能直接交付』。",
+      "question": "这 38 条里哪些是真实对外 API、哪些是内部/废弃/误报？每条需要一位熟悉后端的人逐个定性（detailed / recorded / flagged）。",
+      "impact": "这是 R8 的硬性门禁。未清零前，任何声称\"已覆盖全部接口\"的文档都是不成立的。"
+    },
+    {
+      "id": "P-08",
+      "severity": "medium",
+      "title": "部署步骤间的依赖关系未被数据模型显式声明",
+      "evidence": "步骤顺序仅由 step_index（deploy_executor.py:264 按 step_index 排序）隐含表达，DeployStep 表中无 depends_on 之类的字段。",
+      "question": "组件依赖（如 hadoop 依赖 jdk）是写在 role 内部、还是靠人工排 step_index 保证？如果人工排错顺序会怎样？",
+      "impact": "影响\"如何正确创建部署任务\"这一节的写法。若依赖靠人工维护，文档必须给出正确的顺序约束说明。"
+    },
+    {
+      "id": "P-09",
+      "severity": "low",
+      "title": "scan-entry-points 与 codegraph 的文件口径不一致",
+      "evidence": "scan-entry-points.mjs 扫 77 个文件；codegraph candidates 扫 96 个文件。两者过滤规则不同。",
+      "question": "哪个口径才是\"应该被文档覆盖\"的完整范围？差出来的 19 个文件是否需要纳入入口点扫描？",
+      "impact": "影响入口点清单的可信度，也是历史上出现\"37 vs 44 路由\"口径打架的根源。"
+    }
+  ]
+}

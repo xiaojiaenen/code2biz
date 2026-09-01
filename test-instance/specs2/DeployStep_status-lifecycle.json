@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "DeployStep.status 状态机",
+    "quality_profile": "showcase",
+    "subtitle": "步骤级没有 partial——一步要么成要么败，成败的聚合才上升到任务级的 partial。"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主流程"
+    },
+    {
+      "id": "terminal",
+      "label": "终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "pending",
+      "type": "active",
+      "label": "pending",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "running",
+      "type": "active",
+      "label": "running",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "success",
+      "type": "success",
+      "label": "success",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "failed",
+      "lane": "terminal",
+      "col": 0
+    }
+  ],
+  "transitions": [
+    {
+      "from": "pending",
+      "to": "running",
+      "label": "轮到该步执行",
+      "route": "straight",
+      "labelAt": [
+        171,
+        86
+      ]
+    },
+    {
+      "from": "running",
+      "to": "success",
+      "label": "ansible 执行成功",
+      "route": "straight",
+      "labelAt": [
+        325,
+        86
+      ]
+    },
+    {
+      "from": "running",
+      "to": "failed",
+      "label": "ansible 执行失败或异常",
+      "route": "drop",
+      "channelY": 340
+    },
+    {
+      "from": "running",
+      "to": "pending",
+      "label": "重试时重置步骤状态",
+      "route": "straight",
+      "labelAt": [
+        171,
+        222
+      ]
+    },
+    {
+      "from": "success",
+      "to": "pending",
+      "route": "top-channel",
+      "labelAt": [
+        248,
+        98
+      ]
+    },
+    {
+      "from": "failed",
+      "to": "pending",
+      "via": [
+        [
+          94,
+          479
+        ],
+        [
+          94,
+          240
+        ]
+      ],
+      "toSide": "bottom"
+    }
+  ]
+}

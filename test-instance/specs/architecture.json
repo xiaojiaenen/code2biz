@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Russh 大数据集群管理平台架构",
+    "subtitle": "部署主链路 + 授权校验链路（其余业务 API 见数据层说明）",
+    "output": "russh-architecture.html",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "viewBox": [900, 600],
+    "views": [
+      { "id": "deploy-path", "label": "部署主链路", "focus": ["web", "api", "deploy-api", "deploy-exec", "ansible", "db"], "note": "浏览器提交计划 → 后台线程驱动 Ansible → 写回任务状态。" },
+      { "id": "license-gate", "label": "激活校验链路", "focus": ["api", "license-check", "db"], "note": "未激活时白名单外全部 API 返回 403。" }
+    ]
+  },
+  "layout": { "mode": "grid", "cols": 3, "gapX": 70, "gapY": 60, "cellW": 200, "cellH": 76 },
+  "components": [
+    { "id": "web", "type": "frontend", "label": "Web 前端", "sublabel": "React SPA", "tag": "CORS origins", "row": 0, "col": 0 },
+    { "id": "api", "type": "backend", "label": "FastAPI 入口", "sublabel": "main.py · /api", "row": 0, "col": 1 },
+    { "id": "deploy-api", "type": "backend", "label": "部署引擎 API", "sublabel": "deploy.py", "tag": "Plan→Execute→Retry", "row": 0, "col": 2 },
+    { "id": "license-check", "type": "security", "label": "激活校验中间件", "sublabel": "license_check.py", "tag": "白名单·缓存5s", "row": 1, "col": 0 },
+    { "id": "deploy-exec", "type": "backend", "label": "部署执行器", "sublabel": "deploy_executor.py", "tag": "线程池上限2", "row": 1, "col": 1 },
+    { "id": "ansible", "type": "external", "label": "Ansible Runner", "sublabel": "run_playbook_async", "tag": "超时3600s", "row": 1, "col": 2 },
+    { "id": "db", "type": "database", "label": "SQLite 数据库", "sublabel": "database.py", "row": 2, "col": 1 }
+  ],
+  "connections": [
+    { "id": "web-https", "from": "web", "to": "api", "label": "HTTP / WS", "variant": "emphasis" },
+    { "id": "api-deploy", "from": "api", "to": "deploy-api", "label": "部署路由" },
+    { "id": "api-check", "from": "api", "to": "license-check", "label": "校验激活", "variant": "security", "route": "orthogonal-h" },
+    { "id": "deploy-exec-run", "from": "deploy-api", "to": "deploy-exec", "label": "start / retry", "variant": "emphasis" },
+    { "id": "exec-ansible", "from": "deploy-exec", "to": "ansible", "label": "顺序执行 playbook", "labelDy": 22 },
+    { "id": "exec-db", "from": "deploy-exec", "to": "db", "label": "持久化任务/步骤", "labelDy": 22 },
+    { "id": "read-license", "from": "license-check", "to": "db", "label": "查询 active License", "variant": "security", "route": "orthogonal-v" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "部署引擎", "items": ["Plan: 固定6步 + 组件拓扑序", "Execute: 异步线程，全局并发2", "Retry: 单步幂等重试", "状态: pending→running→success/partial/failed"] },
+    { "dot": "rose", "title": "授权与安全", "items": ["Ed25519 离线签名校验", "机器指纹 sha256 绑定", "未激活时白名单外全部 403"] },
+    { "dot": "cyan", "title": "其余业务 API", "items": ["节点管理 / 集群 / 服务 / 监控 / YUM", "组件 / 模板 / manifest 同步", "均由 FastAPI 入口按 prefix 挂载"] }
+  ]
+}

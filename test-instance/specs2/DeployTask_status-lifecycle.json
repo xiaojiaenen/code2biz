@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "DeployTask.status 状态机",
+    "quality_profile": "showcase",
+    "subtitle": "部署是长耗时多步操作，业务上必须能区分\"全成\"\"部分成\"\"全败\"，否则运维无法判断要不要重跑——partial 是这套系统最核心的业务概念。"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主流程"
+    },
+    {
+      "id": "terminal",
+      "label": "终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "pending",
+      "type": "start",
+      "label": "pending",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "running",
+      "type": "active",
+      "label": "running",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "success",
+      "type": "success",
+      "label": "success",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "failed",
+      "lane": "terminal",
+      "col": 0
+    },
+    {
+      "id": "partial",
+      "type": "neutral",
+      "label": "partial",
+      "lane": "main",
+      "col": 3,
+      "step": "04"
+    }
+  ],
+  "transitions": [
+    {
+      "from": "pending",
+      "to": "running",
+      "label": "任务被调度执行；重试整个任务",
+      "route": "straight",
+      "labelAt": [
+        171,
+        122
+      ]
+    },
+    {
+      "from": "running",
+      "to": "success",
+      "label": "所有步骤均成功",
+      "route": "straight",
+      "labelAt": [
+        325,
+        122
+      ]
+    },
+    {
+      "from": "running",
+      "to": "partial",
+      "label": "any_failed && a…",
+      "route": "bottom-channel",
+      "channelY": 320,
+      "labelAt": [
+        402,
+        320
+      ]
+    },
+    {
+      "from": "running",
+      "to": "failed",
+      "label": "any_failed && !…",
+      "route": "drop",
+      "channelY": 340,
+      "labelAt": [
+        325,
+        356
+      ]
+    }
+  ]
+}

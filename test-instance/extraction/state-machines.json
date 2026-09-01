@@ -1,0 +1,130 @@
+{
+  "_meta": {
+    "repo": "/Users/xiaojia/code/Russh",
+    "generatedAt": "2026-09-01T23:22:00+08:00",
+    "phase": "Phase 1 结构化提取",
+    "method": "ORM 注释里的枚举声明 + grep 全量赋值路径 + codegraph callers 交叉核验",
+    "note": "每条 transition 都带 file:line，可回溯。未找到赋值点的迁移一律不臆造，转入 pending.json"
+  },
+  "stateMachines": [
+    {
+      "entity": "DeployTask",
+      "field": "status",
+      "file": "backend/models/deploy.py:24",
+      "declaredEnum": ["pending", "running", "success", "failed", "partial"],
+      "businessWhy": "部署是长耗时多步操作，业务上必须能区分\"全成\"\"部分成\"\"全败\"，否则运维无法判断要不要重跑——partial 是这套系统最核心的业务概念。",
+      "transitions": [
+        {
+          "from": "pending", "to": "running",
+          "code": "backend/core/deploy_executor.py:245",
+          "trigger": "任务被调度执行",
+          "businessMeaning": "开始部署，写 started_at 并清空上次 error_msg（重试场景下旧错误不应残留）",
+          "sideEffects": ["task.started_at = utcnow()", "task.log_file 指向日志文件", "task.error_msg = None"],
+          "exception": null
+        },
+        {
+          "from": "pending", "to": "running",
+          "code": "backend/core/deploy_executor.py:759",
+          "trigger": "重试整个任务",
+          "businessMeaning": "重试路径复用同一任务记录，已成功的步骤会被跳过（见 step_skipped）",
+          "sideEffects": ["复用已有 DeployStep 记录"],
+          "exception": null
+        },
+        {
+          "from": "running", "to": "success",
+          "code": "backend/core/deploy_executor.py:294 / :784",
+          "trigger": "所有步骤均成功",
+          "businessMeaning": "全部组件在全部目标节点装成功，业务上可以交付使用",
+          "sideEffects": ["task.finished_at = utcnow()"],
+          "exception": null
+        },
+        {
+          "from": "running", "to": "partial",
+          "code": "backend/core/deploy_executor.py:290 / :786",
+          "trigger": "any_failed && any_success",
+          "businessMeaning": "前面若干步已装成功、中间某步失败并中断。业务上\"半成品\"状态：集群可能部分可用，必须人工介入判断后续",
+          "sideEffects": ["task.finished_at = utcnow()"],
+          "exception": "部分成功比全失败更危险——集群处于不一致状态，不能简单重跑（已成功步骤会跳过，但失败步骤的依赖可能已改变）"
+        },
+        {
+          "from": "running", "to": "failed",
+          "code": "backend/core/deploy_executor.py:292 / :788",
+          "trigger": "any_failed && !any_success",
+          "businessMeaning": "第一步就失败，没有任何组件装上，可安全重试",
+          "sideEffects": ["task.finished_at = utcnow()"],
+          "exception": null
+        },
+        {
+          "from": "running", "to": "failed",
+          "code": "backend/core/deploy_executor.py:696",
+          "trigger": "执行器捕获到未预期异常",
+          "businessMeaning": "兜底分支：任何未捕获异常都把任务钉死在 failed，避免任务永远卡在 running 占着资源",
+          "sideEffects": ["记录 error_msg"],
+          "exception": "这是异常兜底路径，不是正常业务分支"
+        }
+      ],
+      "keyRule": "终态判定顺序：if any_failed and any_success → partial; elif any_failed → failed; else → success"
+    },
+    {
+      "entity": "DeployStep",
+      "field": "status",
+      "file": "backend/models/deploy.py:43",
+      "declaredEnum": ["pending", "running", "success", "failed"],
+      "businessWhy": "步骤级没有 partial——一步要么成要么败，成败的聚合才上升到任务级的 partial。",
+      "transitions": [
+        { "from": "pending", "to": "running", "code": "backend/core/deploy_executor.py:371", "trigger": "轮到该步执行", "businessMeaning": "单个 role 开始在一组节点上执行", "exception": null },
+        { "from": "running", "to": "success", "code": "backend/core/deploy_executor.py:588", "trigger": "ansible 执行成功", "businessMeaning": "该 role 在所有目标节点跑通", "exception": null },
+        { "from": "running", "to": "failed", "code": "backend/core/deploy_executor.py:414 / :588", "trigger": "ansible 执行失败或异常", "businessMeaning": "该 role 失败，任务级会据此 break，不再继续后续步骤（步骤间有依赖）", "exception": "失败即中断整条流水线" },
+        { "from": "*", "to": "pending", "code": "backend/core/deploy_executor.py:752", "trigger": "重试时重置步骤状态", "businessMeaning": "重试前把待重跑的步骤重置为 pending，而已成功的步骤保持 success 以便跳过", "exception": null }
+      ],
+      "keyRule": "重试优化：step_record.status == 'success' 的步骤直接跳过并 emit step_skipped（deploy_executor.py:268），避免重复安装"
+    },
+    {
+      "entity": "Node",
+      "field": "status",
+      "file": "backend/models/node.py:30",
+      "declaredEnum": ["unknown", "online", "offline"],
+      "businessWhy": "unknown 是初始态（还没探活过），业务上不等于故障，UI 上要区别于 offline。",
+      "transitions": [
+        { "from": "unknown", "to": "online", "code": "backend/api/nodes.py:137", "trigger": "SSH 探活成功", "businessMeaning": "节点可管理，可以作为部署目标", "exception": null },
+        { "from": "*", "to": "offline", "code": "backend/api/nodes.py:137", "trigger": "SSH 探活失败", "businessMeaning": "节点失联，部署到它会失败，监控看板会标红", "exception": "探活超时/认证失败都归为 offline，不细分原因" }
+      ]
+    },
+    {
+      "entity": "License",
+      "field": "status",
+      "file": "backend/models/license.py:26",
+      "declaredEnum": ["inactive", "active", "expired"],
+      "businessWhy": "商业授权的全局开关，未激活时绝大多数 API 被中间件拦截。",
+      "transitions": [
+        { "from": "inactive", "to": "active", "code": "backend/api/license.py:196", "trigger": "激活码校验通过", "businessMeaning": "产品正式可用", "exception": null },
+        { "from": "active", "to": "expired", "code": "惰性标记：backend/main.py:152 / api/license.py:130 / middleware/license_check.py:103", "trigger": "expires_at < utcnow()", "businessMeaning": "授权过期", "exception": "关键设计：GET 请求只判定不写库（注释明确『避免每次请求都写』），DB 里的 status 可能长期停留在 active 而实际已过期。排查时不能只看 status 字段" }
+      ]
+    },
+    {
+      "entity": "NodeComponent",
+      "field": "install_status",
+      "file": "backend/models/component.py:43",
+      "declaredEnum": ["not_installed", "installing", "installed", "install_failed"],
+      "businessWhy": "把\"装没装\"和\"跑没跑\"拆成两个字段——装了不代表在跑，跑着不代表装得对。",
+      "transitions": [
+        { "from": "*", "to": "installed", "code": "backend/core/status_checker.py:585", "trigger": "周期性状态检测发现已安装", "businessMeaning": "该组件在这台机器上确实存在", "exception": null },
+        { "from": "*", "to": "not_installed", "code": "backend/core/status_checker.py:585", "trigger": "检测发现未安装", "businessMeaning": "机器上没有该组件", "exception": null }
+      ],
+      "keyRule": "并发保护（status_checker.py:584）：nc.install_status != 'installing' 时才覆盖——后台检测绝不能把部署中的 installing 覆盖成 not_installed，否则部署状态会闪烁",
+      "unresolved": [
+        "枚举声明了 installing / install_failed，但全库 grep 未找到对这两个值的赋值点。status_checker.py:5 注释称『installing / install_failed 由部署器设置』，但部署器 deploy_executor.py 里未发现写入。需要人工确认：这两个状态是否已被废弃？"
+      ]
+    },
+    {
+      "entity": "NodeComponent",
+      "field": "run_status",
+      "file": "backend/models/component.py:44",
+      "declaredEnum": ["unknown", "running", "stopped", "error"],
+      "businessWhy": "运行态独立于安装态，供监控看板直接消费。",
+      "transitions": [
+        { "from": "*", "to": "running|stopped|error", "code": "backend/core/status_checker.py:586", "trigger": "周期性检测", "businessMeaning": "组件进程的实际运行状态", "exception": null }
+      ]
+    }
+  ]
+}

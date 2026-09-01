@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "License.status 状态机",
+    "quality_profile": "showcase",
+    "subtitle": "商业授权的全局开关，未激活时绝大多数 API 被中间件拦截。"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主流程"
+    },
+    {
+      "id": "terminal",
+      "label": "终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "inactive",
+      "type": "start",
+      "label": "inactive",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "active",
+      "type": "active",
+      "label": "active",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "expired",
+      "type": "failure",
+      "label": "expired",
+      "lane": "terminal",
+      "col": 0
+    }
+  ],
+  "transitions": [
+    {
+      "from": "inactive",
+      "to": "active",
+      "label": "激活码校验通过",
+      "route": "straight",
+      "labelAt": [
+        171,
+        122
+      ]
+    },
+    {
+      "from": "active",
+      "to": "expired",
+      "label": "expires_at < ut…",
+      "route": "drop",
+      "channelY": 340
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Node.status 状态机",
+    "quality_profile": "showcase",
+    "subtitle": "unknown 是初始态（还没探活过），业务上不等于故障，UI 上要区别于 offline。"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主流程"
+    },
+    {
+      "id": "terminal",
+      "label": "终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "unknown",
+      "type": "start",
+      "label": "unknown",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "online",
+      "type": "success",
+      "label": "online",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "offline",
+      "type": "failure",
+      "label": "offline",
+      "lane": "terminal",
+      "col": 0
+    }
+  ],
+  "transitions": [
+    {
+      "from": "unknown",
+      "to": "online",
+      "label": "SSH 探活成功",
+      "route": "straight",
+      "labelAt": [
+        171,
+        122
+      ]
+    },
+    {
+      "from": "unknown",
+      "to": "offline",
+      "label": "SSH 探活失败",
+      "route": "drop",
+      "channelY": 340
+    },
+    {
+      "from": "online",
+      "to": "offline",
+      "route": "drop",
+      "channelY": 340
+    }
+  ]
+}

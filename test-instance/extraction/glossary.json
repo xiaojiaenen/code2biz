@@ -1,0 +1,91 @@
+{
+  "_meta": {
+    "repo": "/Users/xiaojia/code/Russh",
+    "generatedAt": "2026-09-01T23:26:00+08:00",
+    "phase": "Phase 1 结构化提取 / R4 术语三段式",
+    "format": "每条术语 = 字面定义 + 通俗白话 + 业务场景绑定 + 跨域叫法差异",
+    "note": "这些词是新人读代码时最先卡住的地方，也是旧版示例文档只列了词表、没做正文 tooltip 的遗漏项"
+  },
+  "terms": [
+    {
+      "term": "plan_json",
+      "literal": "DeployTask 表上的 Text 字段，存放部署计划的 JSON 快照（步骤定义、目标节点、变量）。",
+      "plain": "把\"这次要装什么、装到哪台机器、按什么顺序\"提前写成一张单子存进数据库，执行时照单办事。",
+      "scene": "用户点下部署的那一刻，系统就把计划冻结成快照。之后即使管理员改了模板，正在跑的任务也不受影响——这就是为什么它能支持断点重试。",
+      "crossDomain": "前端/产品口可能叫\"部署方案\"，后端叫 plan，运维口常叫\"部署单\"。三者指同一个东西。",
+      "code": "backend/models/deploy.py:23"
+    },
+    {
+      "term": "role",
+      "literal": "Ansible role，一组可复用的自动化任务集合。本项目里 role 名即组件名（jdk / hadoop 等）。",
+      "plain": "一份\"安装说明书\"，写清楚装某个软件要执行哪些命令、拷哪些文件、改哪些配置。",
+      "scene": "一个部署步骤 = 一个 role 在一组节点上执行。role 就是\"这一步装什么\"的答案，DeployStep.role 字段直接存它。",
+      "crossDomain": "Ansible 社区术语，运维熟悉；后端同学容易把它和\"权限角色\"混淆——这里完全不是权限概念。",
+      "code": "backend/models/deploy.py:41"
+    },
+    {
+      "term": "playbook",
+      "literal": "Ansible 的执行单元，由若干 task 组成，由 role 组织。",
+      "plain": "真正被拿去机器上跑的那段脚本。role 是说明书，playbook 是照着说明书干活的工人。",
+      "scene": "后端 core/ansible.py 调用 playbook，从返回结果的 status 字段判断成功与否（判断值是 \"successful\"）。",
+      "crossDomain": "注意与 plan_json 区分：plan_json 是业务层的计划快照，playbook 是执行层的技术产物。",
+      "code": "backend/core/ansible.py:83"
+    },
+    {
+      "term": "inventory",
+      "literal": "Ansible 的主机清单，定义哪些机器参与本次执行及其连接参数。",
+      "plain": "一张\"这次要碰哪些机器\"的名单。",
+      "scene": "执行时由任务的 node_ids 动态生成，决定这一步的命令发往哪些节点。",
+      "crossDomain": "运维叫\"主机清单\"，代码里常简写成 inv。",
+      "code": "backend/core/deploy_executor.py:242 (_load_task_context 返回三元组之一)"
+    },
+    {
+      "term": "extravars",
+      "literal": "Ansible 的额外变量（--extra-vars），运行时注入的参数。",
+      "plain": "每次执行可能不同的临时参数，比如这次装哪个版本、用哪个端口。",
+      "scene": "与 inventory 一起从任务上下文加载，让同一个 role 能适配不同部署需求（同一份说明书，参数不同装出不同结果）。",
+      "crossDomain": "也叫 vars / 运行时变量。",
+      "code": "backend/core/deploy_executor.py:242"
+    },
+    {
+      "term": "partial",
+      "literal": "DeployTask.status 的取值之一，表示部分步骤成功、部分失败。",
+      "plain": "装了一半——前面几步装上了，中间某步挂了，后面的还没轮到。",
+      "scene": "这是本系统最需要人工介入的状态：集群处于不一致状态，且系统不会自动回滚。运维必须先看日志判断已装部分的残留要不要清理，再决定怎么重跑。",
+      "crossDomain": "任务级才有 partial；步骤级（DeployStep）没有这个概念，步骤只有成功或失败。新人常在这里混淆。",
+      "code": "backend/core/deploy_executor.py:290"
+    },
+    {
+      "term": "fingerprint",
+      "literal": "机器指纹，由硬件/系统信息生成的机器唯一标识。",
+      "plain": "这台机器的\"身份证号\"。",
+      "scene": "激活码里绑定了 fingerprint，所以激活码不能拿去第二台机器用。换机器或机器硬件变更都需要重新激活。",
+      "crossDomain": "商业上叫\"机器码\"，法务/销售口可能叫\"授权绑定标识\"。",
+      "code": "backend/core/license_manager.py:5"
+    },
+    {
+      "term": "NodeComponent",
+      "literal": "关联表实体，记录某台机器上某个组件的安装状态与运行状态。",
+      "plain": "一张\"哪台机器装了啥、现在跑没跑\"的台账。",
+      "scene": "与 Component（组件目录）分离：Component 回答\"能装什么版本\"，NodeComponent 回答\"这台机器上实际是什么情况\"。监控看板和部署前检查都读它。",
+      "crossDomain": "产品/运维口可能叫\"组件实例\"或\"装机清单\"。",
+      "code": "backend/models/component.py:30"
+    },
+    {
+      "term": "inactive / active / expired",
+      "literal": "License.status 的三态枚举。",
+      "plain": "没激活 / 激活中 / 已过期。",
+      "scene": "未激活时中间件会拦截绝大多数 API，只放行白名单路径。注意 expired 是惰性标记的——数据库里可能长期显示 active 但系统实际已拒绝服务，必须同时看 expires_at。",
+      "crossDomain": "销售口说\"授权\"，法务说\"许可\"，代码里是 license。",
+      "code": "backend/models/license.py:26"
+    },
+    {
+      "term": "unknown（状态值）",
+      "literal": "Node.status 与 NodeComponent.run_status 的初始态，表示尚未检测过。",
+      "plain": "还没查过，不知道。不是\"坏了\"的意思。",
+      "scene": "节点刚录入时是 unknown，第一次探活后才变成 online 或 offline。UI 上必须和 offline 区别显示，否则新人会误以为所有 unknown 都是故障。",
+      "crossDomain": "⚠️ 注意：NodeComponent.install_status 的枚举里并没有 unknown，但 status_checker.py:526 会产出该值——这是一处需要人工确认的枚举不一致。",
+      "code": "backend/models/node.py:30 / backend/core/status_checker.py:526"
+    }
+  ]
+}

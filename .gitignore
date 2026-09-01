@@ -1,0 +1,8 @@
+# 项目本地数据（不属于 skill 本体）
+.workbuddy/
+
+# 误生成的临时文件
+-j
+
+# macOS
+.DS_Store

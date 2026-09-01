@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "NodeComponent.install_status 状态机",
+    "quality_profile": "showcase",
+    "subtitle": "把\"装没装\"和\"跑没跑\"拆成两个字段——装了不代表在跑，跑着不代表装得对。"
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "主流程"
+    },
+    {
+      "id": "terminal",
+      "label": "终态"
+    }
+  ],
+  "states": [
+    {
+      "id": "not_installed",
+      "type": "start",
+      "label": "not_installed",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "installing",
+      "type": "active",
+      "label": "installing",
+      "lane": "main",
+      "col": 1,
+      "step": "02"
+    },
+    {
+      "id": "installed",
+      "type": "success",
+      "label": "installed",
+      "lane": "main",
+      "col": 2,
+      "step": "03"
+    },
+    {
+      "id": "install_failed",
+      "type": "failure",
+      "label": "install_failed",
+      "lane": "terminal",
+      "col": 0
+    }
+  ],
+  "transitions": [
+    {
+      "from": "not_installed",
+      "to": "installed",
+      "label": "周期性状态检测发现已安装",
+      "route": "bottom-channel",
+      "channelY": 320,
+      "labelAt": [
+        248,
+        320
+      ]
+    },
+    {
+      "from": "installing",
+      "to": "installed",
+      "route": "straight",
+      "labelAt": [
+        325,
+        122
+      ]
+    },
+    {
+      "from": "install_failed",
+      "to": "installed",
+      "route": "straight"
+    },
+    {
+      "from": "installing",
+      "to": "not_installed",
+      "label": "检测发现未安装",
+      "route": "straight",
+      "labelAt": [
+        220,
+        222
+      ]
+    },
+    {
+      "from": "installed",
+      "to": "not_installed",
+      "route": "top-channel",
+      "labelAt": [
+        248,
+        98
+      ]
+    },
+    {
+      "from": "install_failed",
+      "to": "not_installed",
+      "via": [
+        [
+          94,
+          479
+        ],
+        [
+          94,
+          240
+        ]
+      ],
+      "toSide": "bottom"
+    }
+  ]
+}

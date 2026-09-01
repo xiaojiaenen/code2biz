@@ -1,0 +1,121 @@
+{
+  "_meta": {
+    "repo": "/Users/xiaojia/code/Russh",
+    "generatedAt": "2026-09-01T23:24:00+08:00",
+    "phase": "Phase 1 结构化提取",
+    "method": "条件分支 / 配置常量 / 中间件拦截点 直读源码原文，数值均为代码里的字面量，非估算"
+  },
+  "rules": [
+    {
+      "id": "R-LICENSE-CACHE-TTL",
+      "name": "授权状态缓存 5 秒",
+      "code": "backend/middleware/license_check.py:28  _CACHE_TTL_SECONDS = 5.0",
+      "condition": "(now - self._cached_at) < 5.0",
+      "threshold": 5.0,
+      "unit": "秒",
+      "technicalLogic": "激活状态查 DB 的结果缓存在模块级单例里，5 秒内复用，避免每个请求都查一次 License 表。",
+      "businessRule": "这是一条性能与体验的折中：激活成功后最长 5 秒内，其他请求可能仍读到\"未激活\"。业务影响是——用户刚点完激活，立刻刷新页面可能仍被拦截（最长 5 秒）。",
+      "exceptionPath": "激活操作本身会调用 invalidate_license_cache() 立即清缓存（license_check.py:173），所以正常激活流程不会真的等 5 秒。这个 5 秒窗口只在\"未走激活接口就查状态\"时暴露。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-LICENSE-WHITELIST",
+      "name": "授权拦截白名单（前缀精确匹配，大小写敏感）",
+      "code": "backend/middleware/license_check.py:33-38",
+      "condition": "path 前缀匹配 /api/license | /api/health | /docs | /redoc | /openapi.json",
+      "threshold": null,
+      "technicalLogic": "白名单内的路径绕过激活校验。注释特别强调：/api/license 必须在最前，因为 /api/license/* 也要放行。",
+      "businessRule": "这是\"未激活也能自救\"的设计——如果连激活接口都拦截，用户就永远无法激活系统，产品变成死锁。同理 /api/health 放行是为了运维探活不被授权状态影响。",
+      "exceptionPath": "白名单用精确前缀匹配且大小写敏感，所以 /API/license 这类大小写变体会被拦截。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-LICENSE-WS-LOG-PASS",
+      "name": "部署日志 WebSocket 单独放行",
+      "code": "backend/middleware/license_check.py  WHITELIST_DEPLOY_LOG_SUFFIX = \"/log\"",
+      "condition": "路径以 /log 结尾（如 /api/deploy/{task_id}/log）",
+      "threshold": null,
+      "technicalLogic": "只放行后缀，不整段放行 /api/deploy/。注释明确写了原因：整段放行会导致所有部署 API 绕过激活校验。",
+      "businessRule": "WebSocket 握手不走常规鉴权链，无法在流里做拦截，只能按路径放行。缩小到 /log 后缀是为了把绕过面压到最小——只有日志流，不包括启停部署。",
+      "exceptionPath": "这是一处安全边界上的取舍：授权过期时日志流仍可用。业务上可接受（日志不含控制能力），但安全评审时应知悉。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-LICENSE-FAIL-CLOSED",
+      "name": "DB 异常时保守拒收（fail-closed）",
+      "code": "backend/middleware/license_check.py  except Exception: valid = False",
+      "condition": "查询 License 表抛异常",
+      "threshold": null,
+      "technicalLogic": "捕获所有异常，valid 置为 False。",
+      "businessRule": "授权系统必须 fail-closed（故障时拒绝）而非 fail-open（故障时放行）——否则一次数据库抖动就等于免费开放全站。这是商业授权的标准风控姿势。",
+      "exceptionPath": "注释澄清了可行性：白名单 API 本就不受影响，首次启动 init_db 也只走白名单路径，所以保守拒收不会把系统自己锁死。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-LICENSE-EXPIRE-LAZY",
+      "name": "过期为惰性判定，GET 不写库",
+      "code": "backend/api/license.py:130（注释：不在此处 commit 状态变更）、middleware/license_check.py:103-104",
+      "condition": "expires_at is not None and expires_at < utcnow()",
+      "threshold": null,
+      "technicalLogic": "判定过期时只读不写，DB 里的 status 字段不会因为过期而自动变成 expired。",
+      "businessRule": "避免高频读接口产生写操作（性能与锁竞争）。代价是 DB 里的 status 会滞后于真实授权状态。",
+      "exceptionPath": "排查陷阱：直接查 License.status == 'active' 会得到\"看起来有效\"的结论，但系统实际已拒绝服务。必须同时比 expires_at。status 变成 expired 要靠其他写操作（如重新激活）顺带更新。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-LICENSE-PERMANENT",
+      "name": "expires_at 为空表示永久授权",
+      "code": "backend/core/license_manager.py:16、backend/api/license.py:101",
+      "condition": "expires_at IS NULL",
+      "threshold": null,
+      "technicalLogic": "payload 里 expires_at 缺失或为空 → 解析为 None → 不做过期比较。",
+      "businessRule": "支持买断型永久授权。业务上这是与订阅型授权并列的一种售卖形态。",
+      "exceptionPath": "None 与\"解析失败\"需区分：_parse_expires_at 对非法字符串的处理要看具体分支。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-DEPLOY-PARTIAL",
+      "name": "任务终态判定：全成/部分成/全败",
+      "code": "backend/core/deploy_executor.py:289-294 / :784-788",
+      "condition": "if any_failed and any_success → partial; elif any_failed → failed; else → success",
+      "threshold": null,
+      "technicalLogic": "遍历步骤时累计 any_success / any_failed 两个布尔量，结束后一次性定终态。",
+      "businessRule": "partial 是本系统最重要的业务概念：它意味着集群处于\"装了一半\"的不一致状态。运维看到 partial 不能直接重跑，必须先判断已成功的步骤是否留下了需要清理的残留。",
+      "exceptionPath": "审计要点：partial 不触发任何自动回滚。代码中未发现补偿/回滚路径——失败步骤之前的副作用不会被撤销。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-DEPLOY-FAILFAST",
+      "name": "步骤失败即中断，不继续后续步骤",
+      "code": "backend/core/deploy_executor.py:286-288（break）",
+      "condition": "_run_step 返回 False",
+      "threshold": null,
+      "technicalLogic": "任一步失败后 break 出循环，后续步骤保持 pending。",
+      "businessRule": "组件间有依赖关系（典型如先 JDK 后 Hadoop），前一步没装成功，后一步装上去也跑不起来，继续跑只会制造更多不一致。这是业务依赖决定的快速失败。",
+      "exceptionPath": "后续未执行的步骤停在 pending，不是 failed——看板上要能区分\"没轮到\"和\"失败了\"。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-DEPLOY-RETRY-SKIP",
+      "name": "重试时跳过已成功步骤",
+      "code": "backend/core/deploy_executor.py:268-278",
+      "condition": "step_record.status == 'success'",
+      "threshold": null,
+      "technicalLogic": "重试遍历到已成功步骤时 continue，并 emit step_skipped 事件。",
+      "businessRule": "部署重装既耗时又有副作用（比如重复格式化），跳过已完成步骤是必要的成本优化，也让重试在业务上可接受。",
+      "exceptionPath": "风险：如果某步骤上次\"成功\"但之后环境变了（节点重装、磁盘清空），重试会错误地跳过它。代码未发现对上次成功时间的有效性校验。",
+      "confidence": "code-confirmed"
+    },
+    {
+      "id": "R-STATUS-NO-OVERRIDE-INSTALLING",
+      "name": "后台检测不覆盖 installing 状态",
+      "code": "backend/core/status_checker.py:584",
+      "condition": "nc.install_status != 'installing' and result['install_status'] != 'unknown'",
+      "threshold": null,
+      "technicalLogic": "写回前双重判断：既不在安装中，且检测结果不是 unknown。",
+      "businessRule": "防并发踩踏：部署进行中时，周期性检测任务不能把 installing 改写成 not_installed（检测此刻可能还没看到文件落盘），否则界面上的安装进度会闪烁回退，用户会以为部署失败。",
+      "exceptionPath": "unknown 被明确排除——检测失败（节点连不上）时保持原状，不污染已有事实。",
+      "confidence": "code-confirmed"
+    }
+  ]
+}

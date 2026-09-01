@@ -1,0 +1,267 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "biz-doc-generator Phase 1 结构化提取中间数据",
+  "description": "Phase 1（references/01-extraction.md）从代码/schema/配置里确定性地提取出的结构化事实，作为 Phase 2 语义整合、Phase 3 架构图（biz-deps-to-archify.mjs / biz-state-machine-to-archify.mjs 的输入投影）的中间产物。核心原则：每一条事实尽量携带能回到代码的 source_ref；无法从代码确定业务动机的条目必须标 needs_confirmation=true，并最终进 Phase 6 待确认清单，绝不允许编造后混入正式文档。",
+
+  "type": "object",
+  "required": ["meta", "domains", "entities", "state_machines", "business_rules", "terms", "entry_points"],
+  "additionalProperties": false,
+
+  "properties": {
+    "meta": {
+      "type": "object",
+      "description": "这份中间数据本身的信息，用于溯源和机器校验。",
+      "required": ["source_repo", "generated_at", "domain_scope"],
+      "additionalProperties": false,
+      "properties": {
+        "source_repo": { "type": "string", "description": "被分析的目标源码库绝对路径，如 G:\\Downloads\\greecloud_src" },
+        "generated_at": { "type": "string", "description": "ISO 时间戳" },
+        "phase0_segmented": { "type": "boolean", "description": "是否做了 Phase 0 业务域拆分（微服务/多仓库场景必为 true）" },
+        "domain_scope": {
+          "type": "string",
+          "description": "本次提取覆盖的域范围；未拆分时写'单体'，拆分时写覆盖的域 ID 列表"
+        },
+        "extraction_tools": {
+          "type": "array",
+          "description": "实际用到的确定性提取手段（codegraph 命令 / grep / schema 读取 / DDL 解析等），供审查完整性。",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "domains": {
+      "type": "array",
+      "description": "Phase 0 确认的业务域边界（微服务/多仓库场景；单体可只给一个默认域）。域边界的权威来源是仓库/服务边界与用户说法，代码信号只作兜底（references/08-domain-segmentation.md）。",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "boundary_basis"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "description": "域唯一 ID，全文档以它引用" },
+          "name": { "type": "string", "description": "域的显示名，如'交易域'" },
+          "services": { "type": "array", "items": { "type": "string" }, "description": "归属于该域的服务/模块名" },
+          "boundary_basis": {
+            "type": "string",
+            "description": "域边界的判定依据：仓库/服务边界、用户确认、还是代码信号（共享库/依赖强连通）"
+          },
+          "needs_confirmation": { "type": "boolean", "description": "域边界若无法从证据确定则置 true" }
+        }
+      }
+    },
+
+    "entities": {
+      "type": "array",
+      "description": "领域模型：实体及其字段（references/01-extraction.md 1.1）。字段业务含义优先取 ORM 实体/DDL/数据库注释；无注释时不得编造，标 needs_confirmation。",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "domain": { "type": "string", "description": "归属域 ID，见顶层 domains。跨域实体用 domains 数组。" },
+          "domains": { "type": "array", "items": { "type": "string" }, "description": "跨域实体（references/08-domain-segmentation.md）应同时出现在 domain 或 domains" },
+          "name": { "type": "string", "description": "实体名（类名/表名）" },
+          "table": { "type": "string", "description": "对应的数据库表名（如果有 DDL）" },
+          "description": { "type": "string" },
+          "source_ref": { "type": "string", "description": "实体定义的位置：文件 + 行号或函数/类名" },
+          "needs_confirmation": { "type": "boolean" },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string", "description": "字段类型（Java/DB 类型）" },
+                "nullable": { "type": "boolean" },
+                "default": { "type": ["string", "number", "null"] },
+                "comment": { "type": "string", "description": "字段数据库注释/业务含义（第一手来源，references/01-extraction.md 1.1'痛点十一'）" },
+                "comment_source": { "type": "string", "enum": ["db_comment", "orm_javadoc", "inferred_from_code", "none"] },
+                "source_ref": { "type": "string" },
+                "needs_confirmation": { "type": "boolean", "description": "无注释、含义靠代码上下文推断时置 true（references/01-extraction.md 1.1）" }
+              }
+            }
+          },
+          "relations": {
+            "type": "array",
+            "description": "实体间外键/关联关系（references/01-extraction.md 1.1）。",
+            "items": {
+              "type": "object",
+              "required": ["to", "type"],
+              "additionalProperties": false,
+              "properties": {
+                "to": { "type": "string", "description": "关联到的实体 id" },
+                "type": {
+                  "type": "string",
+                  "enum": ["one_to_one", "one_to_many", "many_to_one", "many_to_many", "foreign_key", "shared_reference"],
+                  "description": "关联类型"
+                },
+                "on": { "type": "string", "description": "关联字段，如 order_id" },
+                "source_ref": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "state_machines": {
+      "type": "array",
+      "description": "状态机：基于真实控制流的状态迁移表（references/01-extraction.md 1.2）。只列状态最终形态仍然是猜的，必须有赋值点回溯出的 迁移表。结构与 scripts/biz-state-machine-to-archify.mjs 的输入对齐（id/label/kind + transitions from/to/label），并额外携带触发条件、副作用、代码引用、正常/异常标记。",
+      "items": {
+        "type": "object",
+        "required": ["id", "domain", "title", "states", "transitions"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "domain": { "type": "string" },
+          "title": { "type": "string", "description": "如'订单状态机'" },
+          "subtitle": { "type": "string" },
+          "field_ref": { "type": "string", "description": "承载该状态的字段/枚举，如 orders.status、MesOrderTypeEnum" },
+          "states": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "label"],
+              "additionalProperties": false,
+              "properties": {
+                "id": { "type": "string" },
+                "label": { "type": "string" },
+                "kind": {
+                  "type": "string",
+                  "enum": ["start", "active", "waiting", "decision", "success", "failure", "neutral"],
+                  "description": "映射到 archify state.type；只有正常/异常二元信息时异常一律映射 failure，由人工精修（见 biz-state-machine-to-archify.mjs 头注释）"
+                },
+                "source_ref": { "type": "string", "description": "状态的枚举定义/首次赋值位置" }
+              }
+            }
+          },
+          "transitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["from", "to", "label"],
+              "additionalProperties": false,
+              "properties": {
+                "from": { "type": "string" },
+                "to": { "type": "string" },
+                "label": { "type": "string", "description": "迁移事件，如'支付成功'" },
+                "trigger": { "type": "string", "description": "触发条件（对应代码里该赋值点的判断）" },
+                "pre_condition": { "type": "string", "description": "前置状态检查，如 if(status!=A) throw" },
+                "effects": { "type": "array", "items": { "type": "string" }, "description": "赋值后副作用：发消息/写日志/调用下游" },
+                "kind": {
+                  "type": "string",
+                  "enum": ["normal", "exception"],
+                  "description": "正常路径或异常/补偿路径（references/02 要求异常分支全列，references/01 1.2 强调异常分支同等重要）"
+                },
+                "code_ref": { "type": "string", "description": "该赋值点的 文件+行号/函数名（可验证性来源）" },
+                "needs_confirmation": { "type": "boolean", "description": "该迁移的业务动机无法从代码确定时置 true，进 Phase 6 待确认清单" }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "business_rules": {
+      "type": "array",
+      "description": "业务规则：条件表达式原文 + 数值边界 + 命中行为 + 代码位置（references/01-extraction.md 1.3）。不要把原始条件表达式转写成自然语言后就丢弃——原文是校验用的。",
+      "items": {
+        "type": "object",
+        "required": ["id", "domain", "description", "condition_raw", "code_ref"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "domain": { "type": "string" },
+          "description": { "type": "string", "description": "规则的业务描述（自然语言）" },
+          "condition_raw": { "type": "string", "description": "条件表达式原文，如 amount > 1299 && customerType == 'VIP'" },
+          "thresholds": {
+            "type": "object",
+            "description": "条件里的数值边界原文（金额阈值、数量阈值、时间窗口），原样记录数值，不要转述成'较大的订单'。",
+            "additionalProperties": { "type": ["number", "string"] }
+          },
+          "behavior": { "type": "string", "description": "命中/违反后的具体行为" },
+          "code_ref": { "type": "string", "description": "文件 + 行号 / 函数名" },
+          "is_tacit": {
+            "type": "boolean",
+            "description": "触发人工确认信号时置 true：命名含 special/exception/vip/whitelist/manual/override/temp/hack、超复杂分支、硬编码业务 ID、被注释代码替代逻辑、同操作不同路径行为不一致（references/05-human-verification.md）"
+          },
+          "needs_confirmation": { "type": "boolean" }
+        }
+      }
+    },
+
+    "terms": {
+      "type": "array",
+      "description": "术语映射：统一业务概念 → 各域实际叫法（references/01-extraction.md 1.4、references/09-glossary-tooltips.md）。语义相似但无代码关联证据的词不得武断合并，标疑似同义词待人工确认。",
+      "items": {
+        "type": "object",
+        "required": ["id", "canonical"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "description": "术语唯一 ID，Phase 5 用它做 hover 标注（data-term-id）" },
+          "canonical": { "type": "string", "description": "统一业务概念名" },
+          "definition": { "type": "string", "description": "简明解释（一两句话，供 tooltip）" },
+          "domain_callings": {
+            "type": "array",
+            "description": "各域的实际叫法（表名/字段名/UI 文案/代码类名）。",
+            "items": {
+              "type": "object",
+              "required": ["domain", "term"],
+              "additionalProperties": false,
+              "properties": {
+                "domain": { "type": "string" },
+                "term": { "type": "string", "description": "该域下的叫法" },
+                "source": { "type": "string", "description": "来自哪个表/字段/类" }
+              }
+            }
+          },
+          "enum_mapping": {
+            "type": "array",
+            "description": "不同系统的 status 编码不一致时给出映射（references/02 术语表要求）。",
+            "items": {
+              "type": "object",
+              "required": ["from", "to"],
+              "additionalProperties": false,
+              "properties": {
+                "from": { "type": "string", "description": "如 orders.status=1" },
+                "to": { "type": "string", "description": "如 shipments.ship_status=0" },
+                "meaning": { "type": "string" }
+              }
+            }
+          },
+          "suspected_synonym": { "type": "boolean", "description": "语义相似但无代码关联证据 → 疑似同义词，待人工确认，不得武断合并" },
+          "needs_confirmation": { "type": "boolean" }
+        }
+      }
+    },
+
+    "entry_points": {
+      "type": "array",
+      "description": "入口点清单：交付前用它对文档做覆盖率反向核对（references/01-extraction.md 末尾'完整性保证'）。判断一个流程是否要展开的标准是入口点是否存在，不是主观重要程度。",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "path", "domain", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["http_rpc", "mq_consumer", "scheduled_job", "cli", "event_listener", "admin_ui", "other"],
+            "description": "入口类型（references/01-extraction.md 完整性保证第一节）"
+          },
+          "path": { "type": "string", "description": "接口路径 / 消息 topic / job / 命令名" },
+          "domain": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["detailed", "brief", "exception", "unhandled"],
+            "description": "是否已梳理：detailed=走完 Phase1-2 全套；brief=简单记录一行；exception=识别为异常/特例入待确认；unhandled=清单里有但文档没提（交付前必须清零）"
+          },
+          "code_ref": { "type": "string" },
+          "note": { "type": "string", "description": "当 status=brief 时给一行归类说明 / 当 exception 时给触发信号描述" }
+        }
+      }
+    }
+  }
+}

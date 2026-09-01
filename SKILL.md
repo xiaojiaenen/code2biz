@@ -1,8 +1,7 @@
-***
-
+---
 name: biz-doc-generator
 description: Analyzes a codebase (single repo or multi-service) and produces a single self-contained interactive HTML file (double-click to open in a browser, no server needed) covering business-facing documentation for new-hire onboarding — an interactive architecture/dependency diagram, domain model, clickable state machines, a rule-threshold calculator, business rule handbook, glossary, and a business map/learning path. Use this whenever the user asks to "document the business logic," "help new hires understand this system," "generate business documentation from the code," "draw/visualize the architecture," "explain what this codebase does at a business level," or references pain points like docs being out of sync with code, terminology being inconsistent across teams, or business rules only living in senior engineers' heads. Also use for incremental doc updates after a code change, and for flagging undocumented/tacit business rules for human review. Trigger even if the user just says "help me understand this legacy system," "onboard me to this codebase," or "draw me a diagram of this repo."
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+---
 
 # 业务文档生成器（biz-doc-generator）
 
@@ -54,7 +53,7 @@ Phase 1  结构化提取     代码/schema/配置 → 确定性事实（实体�
 Phase 2  语义整合       结构化事实 → 领域模型/核心流程/规则手册/词汇表（LLM 组织，但基于事实，不自由发挥）
 Phase 3  架构图生成     用 archify（assets/archify/）生成架构/状态机/时序/流程/数据流图，validate → deliver
 Phase 4  交互化呈现     状态机/规则阈值/术语 → 可交互组件（不是静态图表，术语自动关联词汇表）
-Phase 5  打包成单文件   所有章节 + 全部交互组件 + archify 图表(iframe srcdoc) → 一个双击即可打开的 .html 文件
+Phase 5  打包成单文件   所有章节 + 全部交互组件 + archify 图表(原生内联) → 一个双击即可打开的 .html 文件
 Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发）；隐性规则清单（贯穿全程）
 ```
 
@@ -95,7 +94,7 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 如果 Phase 0 划分了业务域，这一步提取的每一条数据都要带上 `domain` 标签（细节见 `references/08-domain-segmentation.md`），不要等 Phase 2 再回头补。
 
-这一步的产出应该是**结构化的中间数据**（比如 JSON/表格），不是文字段落。Phase 2 再把它组织成文档。
+这一步的产出应该是**结构化的中间数据**（比如 JSON/表格），不是文字段落，且结构对齐 `schemas/phase1.schema.json` 的契约（每条事实尽量带 source\_ref）。**离开 Phase 1 前必须跑** **`node scripts/check-phase1.mjs`**：它校验落盘数据的结构、核对集合文件是否齐全、汇总条目数——新会话靠它一次读回 Phase 1 全貌，不跑就等于落盘没有兜底。Phase 2 再把通过校验的数据组织成文档。
 
 **完整性是硬性要求，不是尽力而为**：先用 `scripts/scan-entry-points.mjs` 穷举代码库里所有入口点（接口/消息消费者/定时任务/CLI/事件监听，多语言/多框架正则扫描，已实测能在混合 Java/Express/FastAPI/Click 代码里做到零漏报），产出一份结构化入口点清单，每条都要有明确处理结论（`detailed`/`recorded`/`flagged` 三态之一）。交付前用 `scripts/check-entry-coverage.mjs` 反向核对文档覆盖率，产出可点名的"还有哪几条没处理"清单，不是笼统的百分比。不要凭"看起来重要"筛选流程，判断标准是入口点是否存在，不是主观的重要程度。细节见 `references/01-extraction.md` 末尾"完整性保证"一节。
 
@@ -105,7 +104,7 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 ## Phase 3 · 架构图生成（细节见 references/07a-diagram-generation.md）
 
-不手写 SVG——用 vendored 在 `assets/archify/` 的 archify 生成架构图/状态机图/时序图/数据流图/流程图，走它的 `validate → deliver` 标准流程，产物是独立的自包含 HTML，最后用 `<iframe srcdoc="...">` 内联嵌入 Phase 5 的最终单文件（不是外链，避免多文件产物的 CORS/路径问题）。图的类型对应关系、如何按域分层出图，见参考文档。
+不手写 SVG——用 vendored 在 `assets/archify/` 的 archify 生成架构图/状态机图/时序图/数据流图/流程图，走它的 `validate → deliver` 标准流程，产物是独立的自包含 HTML，再经 `scripts/archify-inline.mjs bundle` 原生内联进 Phase 5 的最终单文件——R1 禁止任何形态的 iframe（含 srcdoc），避免转义断裂与 CORS 问题。图的类型对应关系、如何按域分层出图，见参考文档。
 
 ## Phase 4 · 交互化呈现（细节见 references/03-interactive-artifacts.md、references/09-glossary-tooltips.md）
 
@@ -116,6 +115,8 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 把 Phase 2 的文字内容、Phase 3 的架构图、Phase 4 的交互组件，全部组装进一个自包含的 `.html` 文件——CSS/JS 内联、无外部依赖（或仅用可离线兜底的 CDN），左侧导航 + 右侧内容区，双击即可在浏览器打开，不需要起服务、不需要额外工具。
 
 组装方式上有两条路：手写原生 JS/CSS 直接内联（默认、零构建、离线保真），或者用 React 工程配合 `vite-plugin-singlefile` 编译成单文件（组件多、想要更高视觉完成度、且确认环境能跑 npm 时更划算）。**先读** **`references/10-build-approach.md`** **按里面的探测步骤决定走哪条路，不要默认一条路走到黑**，尤其是这个代码库以前经常在内网/离线环境工作，构建能不能跑起来需要提前确认。无论走哪条路，视觉设计都固定用同一套 token，不是每次重新设计——见下方"视觉设计"一节。
+
+**交付前硬性门禁**：打包完成后必须跑 `node scripts/check-final-html.mjs <final.html>`，它机器化检查 R1（无任何 iframe，含 srcdoc）、无外部/本地 script src、无外部 link（Google Fonts 字体兜底除外）、无运行时 fetch/XHR/WebSocket、标签成对闭合、图表槽位确有内联 SVG。有 error 一律不交付。
 
 ## 视觉设计：固定用 archify 的设计系统，不即兴发挥
 

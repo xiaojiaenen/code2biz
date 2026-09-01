@@ -181,3 +181,21 @@ node scripts/check-entry-coverage.mjs entry-points.json coverage-report.json
 ### 关于"大大小小"
 
 不要只梳理"看起来重要"的核心流程而忽略琐碎的分支。判断一个流程是否要展开写，标准不是"业务重要程度"（这个容易主观误判、遗漏冷门但关键的边缘流程），而是**入口点是否存在**——存在就要有上面第二步的三种结论之一，重要程度只决定详略，不决定是否处理。
+
+## 落盘目录约定与 Phase 1 退出门禁
+
+落盘目录固定为工作区根下的 `phase1/`（本 skill 只分析当前工作区，该目录天然就是目标仓库根），按集合拆分，写完一个集合立即写对应文件：
+
+```
+phase1/_checkpoint.json        —— 上次执行进行到哪个集合（续写定位）
+phase1/00-domains.json         —— 业务域边界
+phase1/10-entities.json        —— 领域模型
+phase1/20-state-machines.json  —— 状态机迁移表
+phase1/30-business-rules.json  —— 业务规则（条件原文 + 数值边界）
+phase1/40-terms.json           —— 术语映射
+phase1/50-entry-points.json    —— 入口点清单（含三态评审结论）
+```
+
+每个集合文件的顶层形状对齐 `schemas/phase1.schema.json` 里对应数组的契约（每条事实尽量带 `source_ref`；无法从代码确定业务动机的条目标 `needs_confirmation=true`，最终进 Phase 6 待确认清单）。
+
+**离开 Phase 1 前必须跑 `node scripts/check-phase1.mjs`**：校验结构、核对七个文件是否齐全、汇总条目数。退出码 0 才能进 Phase 2；有缺失时它会点名"上次可能停在哪一步"，新会话据此精确续写，而不是从零重来。

@@ -81,8 +81,21 @@ Phase 1 的全部提取成果会按集合落盘到项目根的 `phase1/`，任�
 
 ```bash
 node scripts/check-phase1.mjs        # 读回 Phase 1 中间数据 + 校验完整性
-node scripts/check-final-html.mjs <final.html>   # 交付前离线/CORS 自检
+node scripts/check-final-html.mjs <final.html>   # 交付前离线/CORS 自检（能不能打开）
+node scripts/check-content-depth.mjs <final.html> \
+  --coverage <coverage-report.json> --entries <entry-points.json>   # 交付前内容深度门禁（讲没讲清楚）
 ```
+
+### 两个交付门禁，缺一不可
+
+| 脚本 | 管什么 | 典型拦下的问题 |
+|---|---|---|
+| `check-final-html.mjs` | **能不能打开**：无 iframe、无外部资源、无运行时请求、标签闭合、正文无双重转义 | 白屏、CORS、`&quot;` 露出字面量 |
+| `check-content-depth.mjs` | **讲没讲清楚**：R5 流程五维度、R6 架构五问、R7 图注、R8 小业务展开、R10 占位符 | 图注只有 20 字、异常流程只有"失败则报错"、76% 的入口点一句话带过、15 处"（同上触发，未单列）" |
+
+**为什么要两个**：一份 356 KB 的实测产物通过了当时 `check-final-html.mjs` 的全部检查，但正文只有约 2.6k 中文——图占了 90% 的体积，内容几乎是空的。**"打得开"和"讲得清楚"是两件事。** 内容深度门禁的通过样例见 `examples/content-depth-pass-sample.html`（改之前先照着它的结构写），规范要求见 `references/12-content-depth-gate.md`。
+
+建议在**内容写完、还没打包**时就先跑一次内容深度门禁：此时报"图注不足 200 字"改的是段落，打包后报同样的问题改的是 HTML。
 
 ## 目录结构
 
@@ -100,7 +113,13 @@ code2biz/
 │   ├── 07a-diagram-generation.md
 │   ├── 08-domain-segmentation.md
 │   ├── 09-glossary-tooltips.md
-│   └── 10-build-approach.md
+│   ├── 10-build-approach.md
+│   ├── 11-architecture-and-flow.md    # R5 流程五维度 / R6 架构五问 / R7 节点标注
+│   └── 12-content-depth-gate.md       # R9 内容深度可验证 / R10 占位符零容忍 / R11 转义
+├── examples/
+│   ├── content-depth-pass-sample.html # 内容深度门禁的通过样例，也是最终 HTML 的结构骨架
+│   ├── coverage-report.sample.json
+│   └── entry-points.sample.json
 ├── schemas/phase1.schema.json       # Phase 1 中间数据的权威结构
 ├── scripts/                         # 校验与转换脚本（见上文命令）
 └── assets/archify/                  # 内置"图着色"渲染引擎（archify）

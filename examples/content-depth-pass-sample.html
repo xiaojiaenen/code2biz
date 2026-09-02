@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<!--
+  content-depth-pass-sample.html
+
+  这是"内容深度门禁"的**通过样例**，同时也是生成最终文档时的结构模板。
+  它的作用是双重的：
+    1. 证明 check-content-depth.mjs 不是无脑报错——按约定写就能全绿；
+    2. 给 Phase 2/5 一个可复制的骨架：图怎么包、R6 五问放哪、R5 五维度怎么标、
+       recorded 小业务展开成什么样、规则怎么带源码位置。
+
+  跑法（应当全部通过，退出码 0）：
+    node scripts/check-content-depth.mjs examples/content-depth-pass-sample.html \
+      --coverage examples/coverage-report.sample.json \
+      --entries examples/entry-points.sample.json --strict
+
+  内容取自 Russh 部署场景，但已精简，仅为示范结构，不是真实交付物。
+-->
+<head>
+<meta charset="utf-8">
+<title>内容深度门禁 · 通过样例</title>
+</head>
+<body>
+
+<!-- ============ 01 整体架构（R6 五问） ============ -->
+<section id="architecture" data-section="architecture">
+  <h2>01 整体架构</h2>
+
+  <!-- R6-1 拓扑：回答"系统长什么样" -->
+  <div class="arch-r6" data-r6="topology">
+    <h3>1.1 架构拓扑</h3>
+    <p>Russh 是一个单体 FastAPI 应用，按职责纵向切分为三层：表现层是 6 个 API 子模块
+      （nodes / deploy / license / monitor / auth / system），全部挂在同一个 FastAPI 实例上；
+      业务层是 5 个核心服务模块，其中 deploy_executor 是唯一带异步执行能力的模块；
+      数据层是 SQLAlchemy + MySQL，外加 Ansible Runner 这个外部进程。
+      不是微服务，模块之间靠 Python 函数直接调用，没有 RPC 也没有服务注册中心。</p>
+
+    <figure class="arch-figure" data-fig="topology">
+      <div class="arch-slot">
+        <svg viewBox="0 0 400 120" width="400" height="120" role="img">
+          <rect x="10" y="20" width="90" height="40" fill="#2dd4bf" opacity="0.25"/>
+          <text x="55" y="45" font-size="12">Web 前端</text>
+          <rect x="150" y="20" width="110" height="40" fill="#4ade80" opacity="0.25"/>
+          <text x="205" y="45" font-size="12">API 层</text>
+          <rect x="310" y="20" width="80" height="40" fill="#a78bfa" opacity="0.25"/>
+          <text x="350" y="45" font-size="12">数据库</text>
+          <line x1="100" y1="40" x2="150" y2="40" stroke="#888"/>
+          <line x1="260" y1="40" x2="310" y2="40" stroke="#888"/>
+        </svg>
+      </div>
+      <figcaption class="arch-caption">
+        这张图回答的是"一次部署请求在系统里走了哪几跳"。Web 前端只负责采集表单和展示日志，
+        它不持有任何业务判断；API 层承接全部鉴权与参数校验，是唯一对外的写入口，
+        deploy_executor 挂在它下面，因此执行能力不会被外部直接触达；数据库承载任务与步骤的持久化，
+        同时也是前端轮询状态的唯一真相来源。三条连线里值得注意的只有一条：
+        API 层到 deploy_executor 是进程内函数调用而非远程调用，这意味着部署任务与 HTTP 请求
+        生命周期耦合，Web 服务重启会导致正在执行的任务状态失去更新方——这是现存的单点隐患，
+        在 1.5 节展开。箭头方向代表调用方向，不代表数据回流方向，实时日志是通过 WebSocket
+        反向推给前端的，不在这张图的连线上。
+      </figcaption>
+    </figure>
+  </div>
+
+  <!-- R6-2 设计目的：必须回答"为什么" -->
+  <div class="arch-r6" data-r6="purpose">
+    <h3>1.2 设计目的（为什么这么设计）</h3>
+    <p>选单体 FastAPI 是 2022 年初版上线时的团队规模决定的：当时只有 1 个后端加 1 个前端，
+      目标是把 Ansible 手工运维动作收敛成可复用的界面操作，业务体量在千级任务/天，
+      单体加后台线程池足够应对。真正的架构性改动发生在 2023 年：因为商业化需要按节点数授权，
+      才补了一整套 license_manager 校验中间件横切所有写接口。为什么没有拆服务？
+      从代码里能找到的线索是部署动作本身是低频重操作（单集群周级变更），
+      吞吐诉求远低于运维可靠性诉求，拆服务带来的分布式事务问题不划算。</p>
+  </div>
+
+  <!-- R6-3 职责 -->
+  <div class="arch-r6" data-r6="responsibility">
+    <h3>1.3 各层 / 各模块职责</h3>
+    <p><strong>api/deploy.py</strong> 承载部署任务的创建、重试单步、查询状态三类业务能力，
+      典型调用方是 Web 部署页与自动化运维脚本，它依赖 DB 的 deploy_tasks / deploy_steps 两张表，
+      业务约束是同一集群同时只能有 1 个运行中的任务。<strong>core/deploy_executor.py</strong>
+      承载真正的执行能力：按 step 顺序驱动 Ansible playbook、汇总每步成败、判定任务终态，
+      依赖 Ansible Runner 外部进程，全局并发上限 2、单步超时 3600 秒。
+      <strong>core/license_manager.py</strong> 承载授权额度校验，被所有写接口横切调用，
+      超过授权节点数时直接拒绝而不是降级。<strong>api/nodes.py</strong> 承载主机台账与连通性探测，
+      是部署动作的前置依赖。</p>
+  </div>
+
+  <!-- R6-4 依赖关系 -->
+  <div class="arch-r6" data-r6="dependency">
+    <h3>1.4 模块依赖关系</h3>
+    <p>同步调用链只有一条主干：<code>api/deploy.py:execute_deploy</code> 调用
+      <code>core/deploy_executor.py:start_deploy</code>，后者立即返回 task_id 而不阻塞，
+      前端拿 task_id 轮询 <code>/api/deploy/{id}</code> 查状态、订阅
+      <code>/api/deploy/{id}/log</code> WebSocket 拿实时日志。共享数据集中在 deploy_tasks 与
+      deploy_steps 两张表，读写模式是"API 层写任务、执行器写步骤、前端读两边"。
+      没有 MQ，异步是靠 ThreadPoolExecutor 实现的。</p>
+  </div>
+
+  <!-- R6-5 评估：必须写问题/瓶颈 -->
+  <div class="arch-r6" data-r6="assessment">
+    <h3>1.5 架构优势、现存问题、业务适配性</h3>
+    <p><strong>优势</strong>：部署动作被完整建模成任务加步骤的两级结构，任何一步失败都能精确定位并重试，
+      运维排障成本远低于直接跑 Ansible。<strong>现存问题</strong>：第一，任务状态依赖执行器进程更新，
+      Web 服务重启会让运行中的任务卡在 running，这是目前最主要的单点隐患；第二，
+      deploy_steps 表在单任务步骤数超过百级时查询明显变慢，缺少按 task_id 的复合索引；
+      第三，并发上限写死为 2，没有按集群规模自适应。<strong>业务适配性</strong>：
+      如果纳管集群从当前的十级涨到百级，前两个问题会同时放大——并发上限会先成为瓶颈，
+      然后卡死任务的概率随任务数线性上升，届时需要把执行器拆成独立进程并引入任务心跳。</p>
+  </div>
+</section>
+
+<!-- ============ 03 核心流程（R5 五维度） ============ -->
+<section id="flows" data-section="flows">
+  <h2>03 核心流程</h2>
+
+  <section class="flow" data-flow="deploy">
+    <h3>部署主链路</h3>
+
+    <div class="flow-dim" data-r5="main">
+      <h4>主流程</h4>
+      <p>1) 运维在部署页选择目标集群与 playbook，前端 POST <code>/api/deploy</code>；
+        2) <code>api/deploy.py:execute_deploy</code> 校验授权额度与目标主机在线状态，
+        写 deploy_tasks（status=pending）并生成 N 条 deploy_steps（status=pending），返回 task_id；
+        3) <code>core/deploy_executor.py:start_deploy</code> 把任务丢进线程池，
+       立即把 task 置为 running，逐 step 调 Ansible Runner；
+        4) 每步执行完回写 step 状态并通过 WebSocket 推送日志；
+        5) 全部 step 成功后把 task 置为 success，任一步失败则 break 后续步骤并置为 failed 或 partial。
+        前置条件是目标主机全部在线且未超授权；后置条件是 task 落到终态且所有 step 都有明确状态。</p>
+    </div>
+
+    <div class="flow-dim" data-r5="branch">
+      <h4>分支流程</h4>
+      <p>按主机类型分支：普通节点走完整安装 playbook，已装组件走跳过安装直接配置；
+        按来源分支：手动部署要求操作人具 admin 角色，定时巡检触发的部署用系统身份并跳过二次确认。
+        业务意义在于避免重复安装（省时且避免破坏已有数据）与区分人工操作与自动操作（审计要求）。</p>
+    </div>
+
+    <div class="flow-dim" data-r5="exception">
+      <h4>异常流程</h4>
+      <p><strong>目标主机不在线</strong>：触发条件是探测接口连续 3 次无响应，
+        兜底逻辑是把该主机从目标列表剔除后继续执行其余主机，业务后果是任务终态判为 partial 而非 failed，
+        前端列出被跳过的主机由运维人工补跑。<strong>单步超时</strong>：触发条件是单步执行超过 3600 秒，
+        兜底逻辑是杀掉 Ansible 子进程并把该步标记为 failed，业务后果是任务立即终止，
+        已完成的步骤保持成功不回滚，需要人工从失败步续跑。<strong>授权额度不足</strong>：
+        触发条件是目标节点数超过 license 上限，兜底逻辑是在建任务前直接拒绝，
+        业务后果是不产生任何任务记录，前端提示扩容授权。三类异常都不触发告警通知，
+        仅写入任务日志——这是当前的实现缺口。</p>
+    </div>
+
+    <div class="flow-dim" data-r5="data">
+      <h4>数据流转</h4>
+      <p>数据产生于前端提交的表单，加工环节是参数校验与 step 拆分，传输全程走 HTTP 加进程内函数调用，
+        存储在 deploy_tasks（任务级）与 deploy_steps（步骤级）两张表，无分库分表。
+        更新方有两个：API 层写任务状态，执行器写步骤状态，同一任务的状态更新由线程池串行保证，
+        没有版本号或乐观锁。删除策略是软删，任务记录保留 90 天后由运维脚本清理。</p>
+    </div>
+
+    <div class="flow-dim" data-r5="permission">
+      <h4>权限 / 风控</h4>
+      <p>创建部署任务要求操作人具 operator 及以上角色；重试失败步骤额外要求该任务由本人创建或操作人是 admin。
+        设计目的是防止运维 A 误重试运维 B 正在处理的任务造成重复执行。
+        鉴权失败的业务后果是接口直接返回 403 且不产生任务记录，不写入审计日志——这一点需要补。</p>
+    </div>
+  </section>
+</section>
+
+<!-- ============ 04 规则手册 ============ -->
+<section id="rules" data-section="rules">
+  <h2>04 规则手册</h2>
+  <div class="rule" data-rule="deploy-concurrency">
+    <h3>全局部署并发上限</h3>
+    <p>同时运行的部署任务不得超过 2 个，超出时新任务排队等待。
+       源码位置：<code>core/deploy_executor.py:47</code>（<code>ThreadPoolExecutor(max_workers=2)</code>）。
+       命中后果：新任务不会失败，而是留在 pending 直到有空位，运维可能误以为任务卡死。</p>
+  </div>
+</section>
+
+<!-- ============ 07 入口点覆盖率 ============ -->
+<section id="entry-coverage" data-section="entry-coverage">
+  <h2>07 入口点覆盖率</h2>
+  <table>
+    <tr data-entry-id="ep-003" data-entry-status="recorded">
+      <td>GET /api/nodes</td>
+      <td class="entry-business">运维在部署前查看主机台账，用来确认目标主机在线、组件安装状态是否正常。
+        输入是可选的分页参数，输出是主机列表含 IP、在线状态、组件清单。业务目的只有一个：
+        给部署动作提供目标选择的依据。失败边界是数据库不可用时返回空列表而非报错，
+        前端会误判为"没有主机"。</td>
+    </tr>
+    <tr data-entry-id="ep-007" data-entry-status="recorded">
+      <td>DELETE /api/nodes/{id}</td>
+      <td class="entry-business">主机下线后从台账移除，防止后续部署再选到已废弃的机器。
+        输入是主机 ID，输出是删除条数。业务目的是保持台账与实际集群一致，避免误部署。
+        失败边界是主机存在关联的历史部署任务时拒绝硬删，只做软删标记。</td>
+    </tr>
+  </table>
+</section>
+
+</body>
+</html>

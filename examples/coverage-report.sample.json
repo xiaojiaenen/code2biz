@@ -1,0 +1,17 @@
+{
+  "generatedAt": "2026-09-02T00:00:00.000Z",
+  "sourceManifest": "examples/entry-points.sample.json",
+  "total": 4,
+  "reviewed": 4,
+  "coverageRate": 1.0,
+  "coveragePercent": "100.0%",
+  "breakdown": {
+    "detailed": 2,
+    "recorded": 2,
+    "flagged": 0,
+    "stillUnreviewed": 0
+  },
+  "stillUnreviewedList": [],
+  "invalidStatusList": [],
+  "_note": "样例：detailed 2 条 + recorded 2 条，recorded 占比 50%，正好卡在 R9-4 的 50% 上限上（不超）"
+}

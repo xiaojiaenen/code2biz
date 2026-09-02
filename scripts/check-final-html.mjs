@@ -17,6 +17,15 @@
  *   4. 无运行时 fetch() / XMLHttpRequest / WebSocket 发起的外部请求
  *   5. <script>/</script>、<style>/</style> 标签成对闭合，无悬空标签
  *   6. 若文档含图表章节（含 "arch-chart"/"arch-slot" 槽位），必须至少有一段内联 <svg>
+ *   7. 实体转义正确：不得出现 &amp;quot; 这类双重转义（R11）
+ *
+ * 关于第 7 项：这一条是 Russh 实测里踩出来的。产物通过了本脚本当时全部 6 项检查，
+ * 但正文里有 10 处 `&amp;quot;`，浏览器直接把 `&quot;` 五个字符显示给读者看。
+ * "文件打得开"和"内容显示得对"是两件事，转义属于后者的底线，所以放在这里兜底；
+ * check-content-depth.mjs 里也查这一项，那边是从"内容可读性"角度查，两边互补。
+ *
+ * 注意本脚本只管"能打开、显示不错乱"。文档"讲清楚了没有"（R5/R6/R7 的内容深度）
+ * 不归它管，那是 check-content-depth.mjs 的职责——两个脚本都要跑。
  *
  * 用法：
  *   node scripts/check-final-html.mjs <final.html>
@@ -60,6 +69,7 @@ export function run(htmlPath) {
     noRuntimeHttp: makeCheck('no_runtime_http'),
     tagsBalanced: makeCheck('tags_balanced'),
     chartsInlined: makeCheck('charts_inlined'),
+    entityEscaping: makeCheck('entity_escaping_r11'),
   };
 
   let html;
@@ -139,6 +149,24 @@ export function run(htmlPath) {
     fail(checks.chartsInlined, '文档含图表槽位（arch-slot/arch-chart）但没有任何内联 <svg> —— 图没有被 bundle 内联进来');
   }
 
+  // 7) 实体转义（R11）：`&amp;quot;` 这类双重转义会在正文里露出 &quot; 字面量。
+  //    属性值里的同类字符串会被上面的去标签步骤剥掉，所以这里只查真正会显示出来的正文。
+  const textOnly = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+  const doubleEscaped = textOnly.match(/&amp;(?:quot|lt|gt|nbsp|amp|#\d+);/g) || [];
+  if (doubleEscaped.length > 0) {
+    const sample = [...new Set(doubleEscaped)].slice(0, 5).join(' / ');
+    fail(checks.entityEscaping, `发现 ${doubleEscaped.length} 处双重转义（${sample}）—— 浏览器正文会直接显示 &quot; 等字面量，属于可见排版事故，多半是某处对已转义文本又转义了一次`);
+    const idx = textOnly.indexOf(doubleEscaped[0]);
+    if (idx >= 0) {
+      fail(checks.entityEscaping, `  首次出现位置上下文：…${textOnly.slice(Math.max(0, idx - 60), idx + 80).trim()}…`);
+    }
+  }
+
   const hasError = Object.values(checks).some((c) => !c.ok);
 
   return {
@@ -146,7 +174,10 @@ export function run(htmlPath) {
     file: htmlPath,
     has_error: hasError,
     checks,
-    summary: { inline_svg_count: inlineSvgCount },
+    summary: {
+      inline_svg_count: inlineSvgCount,
+      double_escaped_count: doubleEscaped.length,
+    },
   };
 }
 

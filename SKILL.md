@@ -61,7 +61,9 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 先读完这份 SKILL.md 再进入各阶段的参考文档 —— 不要一上来就直接读全部 references/，按需读：
 
-- 首次生成文档（一个新代码库）→ 依次执行 Phase 1 → 2 → 3 → 4 → 5，参考 `references/01-extraction.md`、`references/02-synthesis-checklist.md`、`references/07a-diagram-generation.md`、`references/03-interactive-artifacts.md`、`references/09-glossary-tooltips.md`、`references/10-build-approach.md`、`references/07-single-html-packaging.md`；同时贯穿 `references/05-human-verification.md`
+- 首次生成文档（一个新代码库）→ 依次执行 Phase 1 → 2 → 3 → 4 → 5，参考 `references/01-extraction.md`、`references/02-synthesis-checklist.md`、`references/12-content-depth-gate.md`、`references/07a-diagram-generation.md`、`references/03-interactive-artifacts.md`、`references/09-glossary-tooltips.md`、`references/10-build-approach.md`、`references/07-single-html-packaging.md`；同时贯穿 `references/05-human-verification.md`
+
+- 交付前跑内容深度门禁，或想知道"业务讲清楚了没有"的机器判定标准 → 读 `references/12-content-depth-gate.md`，配套样例 `examples/content-depth-pass-sample.html`
 
 - 微服务/多仓库、涉及多个业务域 → 先读 `references/08-domain-segmentation.md`，域边界要在 Phase 1 之前定下来
 
@@ -102,6 +104,8 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 把 Phase 1 的结构化事实组织成文档时，每一段落必须通过一个"反空洞检查清单"（在 references 里）——例如：每个核心概念是否有具体例子、每个流程是否写了异常分支、每条规则是否带了原始数值。这是解决"AI生成文档像提纲"这个痛点的关键机制，不能靠 prompt 里说一句"请详细一点"就指望模型自觉。
 
+**内容写完后、打包之前，先跑一次** `node scripts/check-content-depth.mjs`。不要等 Phase 5 打包完再跑：此刻报"图注不足 200 字"改的是段落，打包后报同样的问题改的是 HTML，后者成本高一个数量级。这份脚本要检查的标记约定（图的 `figure`/`figcaption`、架构五问的 `data-r6`、流程五维度的 `data-flow`/`data-r5`、入口点的 `data-entry-*`）见 `references/12-content-depth-gate.md`，骨架可直接照抄 `examples/content-depth-pass-sample.html`。
+
 ## Phase 3 · 架构图生成（细节见 references/07a-diagram-generation.md）
 
 不手写 SVG——用 vendored 在 `assets/archify/` 的 archify 生成架构图/状态机图/时序图/数据流图/流程图，走它的 `validate → deliver` 标准流程，产物是独立的自包含 HTML，再经 `scripts/archify-inline.mjs bundle` 原生内联进 Phase 5 的最终单文件——R1 禁止任何形态的 iframe（含 srcdoc），避免转义断裂与 CORS 问题。图的类型对应关系、如何按域分层出图，见参考文档。
@@ -116,7 +120,11 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 组装方式上有两条路：手写原生 JS/CSS 直接内联（默认、零构建、离线保真），或者用 React 工程配合 `vite-plugin-singlefile` 编译成单文件（组件多、想要更高视觉完成度、且确认环境能跑 npm 时更划算）。**先读** **`references/10-build-approach.md`** **按里面的探测步骤决定走哪条路，不要默认一条路走到黑**，尤其是这个代码库以前经常在内网/离线环境工作，构建能不能跑起来需要提前确认。无论走哪条路，视觉设计都固定用同一套 token，不是每次重新设计——见下方"视觉设计"一节。
 
-**交付前硬性门禁**：打包完成后必须跑 `node scripts/check-final-html.mjs <final.html>`，它机器化检查 R1（无任何 iframe，含 srcdoc）、无外部/本地 script src、无外部 link（Google Fonts 字体兜底除外）、无运行时 fetch/XHR/WebSocket、标签成对闭合、图表槽位确有内联 SVG。有 error 一律不交付。
+**交付前硬性门禁**：打包完成后必须跑 `node scripts/check-final-html.mjs <final.html>`，它机器化检查 R1（无任何 iframe，含 srcdoc）、无外部/本地 script src、无外部 link（Google Fonts 字体兜底除外）、无运行时 fetch/XHR/WebSocket、标签成对闭合、图表槽位确有内联 SVG、正文无双重转义（R11）。有 error 一律不交付。
+
+**但它只保证"打得开"，不保证"讲得清楚"。** 交付前必须再跑 `node scripts/check-content-depth.mjs <final.html> --coverage <coverage-report.json> --entries <entry-points.json>`，它检查 R9（R5 流程五维度 / R6 架构五问 / R7 图注 / R8 小业务展开是否都有机器可定位的落点）、R10（占位符零容忍）、R11（转义）。有 error 一律不交付。
+
+这两个脚本的分工是踩过坑之后定下来的：Russh 实测产物 356 KB、正文只有约 2.6k 中文、7 张图图注全是 20-70 字符、29/38 个入口点一句话带过、15 处"（同上触发，未单列）"、10 处 `&amp;quot;` 双重转义——**而它通过了当时 check-final-html.mjs 的全部检查**。原因很简单：R5/R6/R7 在 references 里写着"必须全部答出，不能跳过"，但当时没有任何脚本检查这句话。**一条规则没有对应的可执行检查，它的实际效力等于零。** 这就是 R9/R10/R11 存在的原因，细节见 `references/12-content-depth-gate.md`。
 
 ## 视觉设计：固定用 archify 的设计系统，不即兴发挥
 
@@ -150,9 +158,13 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 - **入口点覆盖率**：跑一次 `node scripts/check-entry-coverage.mjs`，`stillUnreviewedList` 是否为空——不为空就必须逐条处理或明确说明原因，不能直接交付。这份覆盖率报告本身也要交付给用户（可以放进 Phase 5 单文件 HTML 的独立一节）
 
+- **小业务有没有被一句话带过**（R9）：跑 `node scripts/check-content-depth.mjs` 时带上 `--coverage` 和 `--entries`。`recorded` 占比超过 50%、或某条 recorded 的业务说明不足 60 字符，都是"漏讲业务"的信号——漏业务的地方从来不是主流程，是这些"看起来不重要"的角落
+
+- **内容深度门禁**：`node scripts/check-content-depth.mjs <final.html>` 的 error 项是否已清零。规则总表（R1-R11）见 `references/12-content-depth-gate.md` 末尾
+
 - **最终产物是不是一个能直接双击打开的单文件** **`.html`**，而不是散落的 Markdown/多个 artifact 链接
 
-- **CORS/离线自检**：没有外部 `<script src>`、没有运行时 `fetch()`/`XHR`、没有指向独立文件的 `<script type="module" src="...">`、archify 图表是用 `<iframe srcdoc="...">` 内联而不是外链——完整检查清单见 `references/07-single-html-packaging.md`
+- **CORS/离线自检**：没有外部 `<script src>`、没有运行时 `fetch()`/`XHR`、没有指向独立文件的 `<script type="module" src="...">`、archify 图表是用 `scripts/archify-inline.mjs bundle` **原生内联**（禁止 `<iframe srcdoc>`，R1）——完整检查清单见 `references/07-single-html-packaging.md`，由 `scripts/check-final-html.mjs` 机器化执行
 
 - 视觉呈现是否用的是 `assets/archify/DESIGN.md` 固定 token，没有随意引入这套规范之外的颜色/字体
 

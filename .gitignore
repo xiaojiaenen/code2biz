@@ -1,3 +1,11 @@
+# 运行产物（不提交）
+output/
+node_modules/
+*.log
+
+# CodeGraph 本地索引（会在项目里生成 .codegraph/，还可能起 daemon）
+.codegraph/
+
 # 项目本地数据（不属于 skill 本体）
 .workbuddy/
 

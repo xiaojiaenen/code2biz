@@ -1,0 +1,44 @@
+{
+  "scannedAt": "2026-09-02T00:00:00.000Z",
+  "filesScanned": 12,
+  "entryPointsFound": 4,
+  "entryPoints": [
+    {
+      "id": "ep-001",
+      "file": "api/deploy.py",
+      "line": 42,
+      "detail": "POST /api/deploy",
+      "type": "http",
+      "framework": "fastapi",
+      "status": "detailed"
+    },
+    {
+      "id": "ep-002",
+      "file": "api/deploy.py",
+      "line": 88,
+      "detail": "POST /api/deploy/{id}/retry-step",
+      "type": "http",
+      "framework": "fastapi",
+      "status": "detailed"
+    },
+    {
+      "id": "ep-003",
+      "file": "api/nodes.py",
+      "line": 15,
+      "detail": "GET /api/nodes",
+      "type": "http",
+      "framework": "fastapi",
+      "status": "recorded"
+    },
+    {
+      "id": "ep-007",
+      "file": "api/nodes.py",
+      "line": 61,
+      "detail": "DELETE /api/nodes/{id}",
+      "type": "http",
+      "framework": "fastapi",
+      "status": "recorded"
+    }
+  ],
+  "_note": "样例清单：recorded 2 条必须都在最终文档里有 data-entry-id 对应且业务说明达标"
+}

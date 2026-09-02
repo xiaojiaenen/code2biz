@@ -82,6 +82,8 @@ Phase 1 的全部提取成果会按集合落盘到项目根的 `phase1/`，任�
 ```bash
 node scripts/check-phase1.mjs        # 读回 Phase 1 中间数据 + 校验完整性
 node scripts/check-final-html.mjs <final.html>   # 交付前离线/CORS 自检（能不能打开）
+node scripts/check-entry-coverage.mjs <coverage-report.json>   # 入口点覆盖率报告（R8，可点名未处理项）
+node scripts/expand-recorded.mjs <entry-points.json> <out.md>  # 把被一句话带过的小业务摊成可逐条补写的骨架
 node scripts/check-content-depth.mjs <final.html> \
   --coverage <coverage-report.json> --entries <entry-points.json>   # 交付前内容深度门禁（讲没讲清楚）
 ```
@@ -132,3 +134,8 @@ code2biz/
 
 - `phase1/`：Phase 1 中间数据（唯一真源，可恢复）
 - `output/`：最终 HTML 交付物
+
+## 仓库维护说明
+
+- **单分支 `master`**：R9-R13 门禁与 wiki 级输出结构 v2 的全部工作都在这一个分支上（历史分支 `content-depth` / `archify-integration` 已并入并删除）。
+- **`test-instance/` 已移出仓库**：那是 Russh 项目的一次性实测产物（约 14 万行），只用于验证门禁会真实报错，不属于 skill 本体。复盘数据如有需要请从 git 历史（`1e92cd6` 之前）取。

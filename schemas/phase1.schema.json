@@ -133,7 +133,8 @@
                   "enum": ["start", "active", "waiting", "decision", "success", "failure", "neutral"],
                   "description": "映射到 archify state.type；只有正常/异常二元信息时异常一律映射 failure，由人工精修（见 biz-state-machine-to-archify.mjs 头注释）"
                 },
-                "source_ref": { "type": "string", "description": "状态的枚举定义/首次赋值位置" }
+                "source_ref": { "type": "string", "description": "状态的枚举定义/首次赋值位置" },
+                "biz_definition": { "type": "string", "description": "R12（references/13-business-deep-reading.md §1.2）：该状态的业务含义——谁让它进入、此刻业务世界里什么是真的（资源已占用/款已到账/库存已锁定）、离开意味着什么。禁止复述状态名；unknown 类字面量必须解释成因，解释不了标 needs_confirmation 进待确认清单，禁止照抄字面量充数" }
               }
             }
           },
@@ -147,6 +148,9 @@
                 "from": { "type": "string" },
                 "to": { "type": "string" },
                 "label": { "type": "string", "description": "迁移事件，如'支付成功'" },
+                "actor": { "type": "string", "description": "R12：触发者——谁/哪个模块/哪类角色/哪类定时器触发了这次流转（codegraph callers 回溯的结果），如'调度器线程认领'、'用户在支付页确认'" },
+                "biz_action": { "type": "string", "description": "R12：该迁移对应的真实业务动作，从词表中选或用同层级动词：任务创建/资源占用/资源释放/执行下发/执行中断/完成回执/失败登记/补偿回退/人工介入/审核通过/审核驳回/锁定/解锁/扣减/回补/通知触发。禁止留空——留空就是'unknown → running'式裸流转" },
+                "biz_meaning": { "type": "string", "description": "R12：流转完成在业务上的意义——流转完成后业务世界里什么变了（订单进入可发货池/库存被锁定防超卖/用户收到回执）。推不出业务意义标 needs_confirmation，禁止编造" },
                 "trigger": { "type": "string", "description": "触发条件（对应代码里该赋值点的判断）" },
                 "pre_condition": { "type": "string", "description": "前置状态检查，如 if(status!=A) throw" },
                 "effects": { "type": "array", "items": { "type": "string" }, "description": "赋值后副作用：发消息/写日志/调用下游" },

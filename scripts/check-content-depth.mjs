@@ -28,6 +28,13 @@
  *   R9-4 小业务展开     每个 recorded 入口点必须有 ≥60 可见字符的业务说明；
  *                       recorded 占已处理入口点的比例 ≤ 50%
  *   R9-6 规则可追溯     每条业务规则必须带源码位置（file:line / 文件名+行号）
+ *   R9-7 状态业务化(R12) 每个 data-sm 状态机必须有状态业务定义表（每状态 ≥20 字符）
+ *                       和迁移业务含义表（每条 ≥40 字符且含业务动词）；
+ *                       全文无 data-sm 却出现 `unknown → running` 式裸字面量
+ *                       流转时直接报错（Russh 实测事故形态）
+ *   R9-8 流程分层(R13)   data-level="main|system" 的流程必须有 data-level="sub"
+ *                       子流程；每个子流程必须有调用链（file:line）与 ≥30 字符职责
+ *   R9-9 wiki 结构       14 章结构的核心章节是否缺席（warn 级，references/06 v2）
  *
  * 用法：
  *   node scripts/check-content-depth.mjs <final.html> [选项]
@@ -79,6 +86,36 @@ const R6_PURPOSE_MUST = ['为什么', '目的', '为了', '因为', '诉求', '�
 const R6_ASSESSMENT_MUST = ['问题', '瓶颈', '风险', '优势', '适配', '吃力', '隐患', '不足', '局限'];
 const R5_EXC_TRIGGER = ['触发', '条件', '当', '如果', '失败', '超时', '异常', '冲突', '不足', '中断', '越权'];
 const R5_EXC_RESULT = ['后果', '回退', '回滚', '降级', '通知', '重试', '补偿', '告警', '终态', '变为', '标记为', '拦截', '拒绝'];
+
+/**
+ * R12 业务动作词表（references/13-business-deep-reading.md §1.3）。
+ * 迁移业务含义行必须至少命中一个——纯状态字面量罗列不会命中任何动词。
+ */
+const SM_BIZ_VERBS = [
+  '任务创建', '创建', '资源占用', '占用', '资源释放', '释放', '执行下发', '下发',
+  '执行中断', '中断', '完成回执', '回执', '失败登记', '登记', '补偿回退', '回退',
+  '人工介入', '介入', '审核通过', '审核驳回', '审核', '锁定', '解锁', '扣减', '回补',
+  '通知触发', '通知', '调度', '认领', '排产', '冻结', '冲销', '回滚', '提交', '确认',
+  '分配', '合并', '拆分', '拣选', '上架', '入库', '出库', '盘点', '发货', '收货',
+  '启动', '停止', '取消', '触发', '推送给', '写入', '拉起', '指派',
+];
+
+/** 源码位置：file:line / 文件名+行号 / L123 */
+const SRC_REF_RE = /[\w-]+\.(?:py|java|go|ts|tsx|js|jsx|rs|rb|php|cs|kt|dart|scala|sql)\s*:?\s*\d+|:\s*\d{1,5}\b|第\s*\d+\s*行|L\d{1,5}\b/;
+
+/**
+ * R9-9 wiki 结构核心章节（references/06 v2 的 14 章里的必查子集）。
+ * keys 是可接受的 data-section / section id 命名（新命名在前，兼容旧命名）。
+ */
+const WIKI_SECTIONS = [
+  { keys: ['business-background', 'background'], label: '业务背景概述' },
+  { keys: ['glossary', 'terms'], label: '核心概念与术语表' },
+  { keys: ['architecture'], label: '整体架构（R6 五问）' },
+  { keys: ['data-model', 'domain-model', 'entities'], label: '数据模型与单据流转' },
+  { keys: ['flow-hierarchy', 'flows', 'core-flows'], label: '流程分层清单（含状态业务化）' },
+  { keys: ['entry-callchain', 'entry-coverage', 'entries', 'entry-points'], label: '关键代码入口与调用链' },
+  { keys: ['pending', 'pending-list', 'conclusion'], label: '结论与待确认清单' },
+];
 
 /**
  * R10 占位符黑名单。命中即 error —— "未单列"、"待补" 这类文本出现在交付物里，
@@ -423,15 +460,162 @@ function checkRuleTraceability(html, checks) {
     checks.push(c);
     return;
   }
-  const srcRe = /[\w-]+\.(?:py|java|go|ts|tsx|js|jsx|rs|rb|php|cs|kt|dart|scala|sql)\s*:?\s*\d+|:\s*\d{1,5}\b|第\s*\d+\s*行|L\d{1,5}\b/;
   const untraced = [];
   for (const r of rules) {
-    if (!srcRe.test(toVisibleText(r.html))) untraced.push(attr(r.attrs, 'data-rule') || '(未命名)');
+    if (!SRC_REF_RE.test(toVisibleText(r.html))) untraced.push(attr(r.attrs, 'data-rule') || '(未命名)');
   }
   c.stats.traced = rules.length - untraced.length;
   const rate = (rules.length - untraced.length) / rules.length;
   if (rate < TH.ruleTraceMin) {
     failCheck(c, `${untraced.length}/${rules.length} 条业务规则没有源码位置（file:line 或文件名+行号），低于 ${TH.ruleTraceMin * 100}% 门槛：${untraced.slice(0, 10).join('、')}`);
+  }
+  checks.push(c);
+}
+
+/**
+ * R9-7 状态业务化（R12）。
+ * 两级防线：
+ *  1) 有 data-sm 标记 → 逐台检查状态业务定义（每状态 ≥20 字符）与
+ *     迁移业务含义（每条 ≥40 字符且含业务动词）。
+ *  2) 全文没有 data-sm → 扫描可见正文里的裸字面量流转（`unknown → running`，
+ *     排除 <code>/<pre> 内的代码），命中即报错——这正是 Russh 实测事故的形态，
+ *     不允许"没有标记"看起来像"没有状态机"。
+ */
+function checkStateMachines(html, checks) {
+  const c = makeCheck('R9_7_sm_business');
+  // 注意：必须用 attr 精确匹配 data-sm，hasAttr 的 \bdata-sm\b 会把
+  // data-sm-state / data-sm-tx 也误当成状态机容器。
+  const sms = extractBlocks(html, ANY_TAG, (a) => attr(a, 'data-sm') !== null);
+  c.stats = { state_machines: sms.length };
+
+  if (sms.length === 0) {
+    const raw = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(?:code|pre)[\s\S]*?<\/(?:code|pre)>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&[a-z#0-9]+;/gi, ' ');
+    const bareRe = /(?:^|[|\s(>])([a-z][a-z0-9_]{1,24})\s*(?:→|->)\s*([a-z][a-z0-9_]{1,24})/g;
+    const bare = raw.match(bareRe) || [];
+
+    // 形态 2（Russh 实测事故的真实形态）：archify 状态图把迁移编码成
+    // data-edge-from="pending" / data-edge-to="running" 属性，可见文本里没有箭头。
+    // 用状态词表过滤，避免把架构图里的模块连线（节点名不是状态词）误伤。
+    const STATE_LIKE = /^(unknown|pending|running|created|init|initial|waiting|queued|active|success|succeeded|failed|failure|partial|canceled|cancelled|complete|completed|done|error|timeout|expired|locked|unlocked|closed|open|resolved|rejected|approved|draft|stopped|paused|aborted|rollback(ed)?|retrying|dispatched)$/i;
+    const smEdges = [];
+    const tagRe = /<[^>]*>/g;
+    let tm;
+    while ((tm = tagRe.exec(html)) !== null) {
+      const f = attr(tm[0], 'data-edge-from');
+      const t = attr(tm[0], 'data-edge-to');
+      if (f && t && STATE_LIKE.test(f) && STATE_LIKE.test(t)) smEdges.push(`${f} → ${t}`);
+    }
+
+    c.stats.bare_literal_transitions = bare.length;
+    c.stats.sm_edge_literal_pairs = smEdges.length;
+    if (bare.length > 0 || smEdges.length > 0) {
+      const sample = [...bare.map((s) => s.trim()), ...smEdges].slice(0, 3).join('、');
+      failCheck(c, `文档没有任何 data-sm 状态机标记，却存在 ${bare.length + smEdges.length} 处裸字面量流转（如 ${sample}）—— 状态字面量照抄不是业务讲解，"unknown 是什么、谁触发的、流转完业务世界什么变了"一个都没回答（R12，references/13 §1.2）。修法：给状态机章节加 data-sm，补状态业务定义表与迁移业务含义表`);
+    }
+    checks.push(c);
+    return;
+  }
+
+  for (const sm of sms) {
+    const name = attr(sm.attrs, 'data-sm') || '(未命名)';
+    const states = extractBlocks(sm.html, ANY_TAG, (a) => hasAttr(a, 'data-sm-state'));
+    const txs = extractBlocks(sm.html, ANY_TAG, (a) => hasAttr(a, 'data-sm-tx'));
+    c.stats[`${name}:states`] = states.length;
+    c.stats[`${name}:transitions`] = txs.length;
+
+    if (states.length === 0) {
+      failCheck(c, `状态机「${name}」没有状态业务定义表 —— R12 要求每个状态先回答"此刻业务世界里什么是真的"，迁移表放在定义表之后（references/13 §1.2）`);
+    }
+    for (const s of states) {
+      const sid = attr(s.attrs, 'data-sm-state') || '(未命名)';
+      const text = toVisibleText(s.html);
+      if (text.length < 20) {
+        failCheck(c, `状态机「${name}」的状态「${sid}」业务定义只有 ${text.length} 字符（要求 ≥20）—— "running 就是运行中"这类复述不算定义`);
+      }
+    }
+    if (txs.length === 0) {
+      failCheck(c, `状态机「${name}」没有迁移业务含义行（data-sm-tx）—— 只有图和状态定义没有迁移讲解，等于把翻译工作留给了读者`);
+      continue;
+    }
+    for (const t of txs) {
+      const tid = attr(t.attrs, 'data-sm-tx') || '(未命名)';
+      const text = toVisibleText(t.html);
+      if (text.length < 40) {
+        failCheck(c, `状态机「${name}」的迁移「${tid}」业务含义只有 ${text.length} 字符（要求 ≥40）—— 需要触发者 + 业务动作 + 业务意义三要素`);
+        continue;
+      }
+      if (!SM_BIZ_VERBS.some((v) => text.includes(v))) {
+        failCheck(c, `状态机「${name}」的迁移「${tid}」通篇没有业务动词（${SM_BIZ_VERBS.slice(0, 8).join('/')}…任一）—— 疑似只罗列了状态字面量和方法名`);
+      }
+      if (!SRC_REF_RE.test(text)) {
+        c.level = 'warn';
+        failCheck(c, `状态机「${name}」的迁移「${tid}」没有代码位置（file:line）—— R12 迁移表第七列缺失，读者无法回源码验证`);
+      }
+    }
+  }
+  checks.push(c);
+}
+
+/**
+ * R9-8 流程分层（R13）：main/system 层的流程必须有 sub 子流程，
+ * 子流程必须有调用链（file:line）与 ≥30 字符的职责说明。
+ */
+function checkFlowLevels(html, checks) {
+  const c = makeCheck('R9_8_flow_levels');
+  const flows = extractBlocks(html, ANY_TAG, (a) => hasAttr(a, 'data-flow'));
+  const withLevel = flows.filter((f) => hasAttr(f.attrs, 'data-level'));
+  c.stats = { flows: flows.length, with_level: withLevel.length };
+
+  if (flows.length > 0 && withLevel.length === 0) {
+    c.level = 'warn';
+    failCheck(c, `${flows.length} 个 data-flow 流程块都没有 data-level 层级标记 —— R13 四层拆解（系统级→主流程→子流程→关键方法）无从验证；给主流程加 data-level="main"、子流程加 data-level="sub"（references/13 §2）`);
+  }
+
+  for (const f of withLevel) {
+    const name = attr(f.attrs, 'data-flow') || '(未命名)';
+    const lvl = (attr(f.attrs, 'data-level') || '').trim();
+    if (lvl !== 'main' && lvl !== 'system') continue;
+    const subs = extractBlocks(f.html, ANY_TAG, (a) => (attr(a, 'data-level') || '').trim() === 'sub');
+    if (subs.length === 0) {
+      failCheck(c, `流程「${name}」标注为 ${lvl} 层，但没有任何 data-level="sub" 子流程 —— 主流程只有概述没有环节拆解，等于只有目录没有内容（R13）`);
+      continue;
+    }
+    for (const s of subs) {
+      const sub = attr(s.attrs, 'data-subflow') || '(未命名)';
+      const text = toVisibleText(s.html);
+      if (text.length < 30) {
+        failCheck(c, `流程「${name}」的子流程「${sub}」只有 ${text.length} 字符（要求 ≥30）—— 缺"抽掉它整体业务断在哪"的职责说明`);
+      }
+      if (!SRC_REF_RE.test(text)) {
+        failCheck(c, `流程「${name}」的子流程「${sub}」没有调用链（file:line）—— R13 要求子流程能回到代码，调用链底座用 codegraph callers/callees，不许凭目录结构猜`);
+      }
+    }
+  }
+  checks.push(c);
+}
+
+/**
+ * R9-9 wiki 结构完整性（references/06 v2 的 14 章结构）。
+ * warn 级：小型项目可有意识省略，但要在第 00 章写明省略原因。
+ */
+function checkWikiStructure(html, checks) {
+  const c = makeCheck('R9_9_wiki_structure', 'warn');
+  const found = new Set();
+  for (const s of extractBlocks(html, 'section')) {
+    const v = attr(s.attrs, 'data-section') || attr(s.attrs, 'id');
+    if (v) found.add(String(v).toLowerCase());
+  }
+  c.stats = { sections_found: [...found] };
+  const missing = WIKI_SECTIONS.filter((w) => ![...found].some((f) => w.keys.some((k) => f === k || f.includes(k) || k.includes(f))));
+  c.stats.missing = missing.map((w) => w.label);
+  if (missing.length > 0) {
+    failCheck(c, `wiki 结构缺少 ${missing.length} 个核心章节：${missing.map((w) => w.label).join('、')}。小型项目可有意识省略，但要在第 00 章文档信息里写明省略原因（references/06 v2 的 14 章结构）`);
   }
   checks.push(c);
 }
@@ -464,8 +648,11 @@ export function run(htmlPath, opts = {}) {
   checkFigureCaptions(html, checks);
   checkArchitecture(html, checks);
   checkFlows(html, checks);
+  checkStateMachines(html, checks);
+  checkFlowLevels(html, checks);
   checkRecorded(html, checks, opts);
   checkRuleTraceability(html, checks);
+  checkWikiStructure(html, checks);
 
   const errors = checks.filter((c) => !c.ok && c.level === 'error');
   const warns = checks.filter((c) => !c.ok && c.level === 'warn');

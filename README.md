@@ -91,7 +91,7 @@ node scripts/check-content-depth.mjs <final.html> \
 | 脚本 | 管什么 | 典型拦下的问题 |
 |---|---|---|
 | `check-final-html.mjs` | **能不能打开**：无 iframe、无外部资源、无运行时请求、标签闭合、正文无双重转义 | 白屏、CORS、`&quot;` 露出字面量 |
-| `check-content-depth.mjs` | **讲没讲清楚**：R5 流程五维度、R6 架构五问、R7 图注、R8 小业务展开、R10 占位符 | 图注只有 20 字、异常流程只有"失败则报错"、76% 的入口点一句话带过、15 处"（同上触发，未单列）" |
+| `check-content-depth.mjs` | **讲没讲清楚**：R5 流程五维度、R6 架构五问、R7 图注、R8 小业务展开、R10 占位符、R12 状态业务化（禁 `unknown → running` 式裸流转）、R13 流程四层拆解、wiki 结构完整性 | 图注只有 20 字、异常流程只有"失败则报错"、76% 的入口点一句话带过、15 处"（同上触发，未单列）"、30 处裸字面量状态流转 |
 
 **为什么要两个**：一份 356 KB 的实测产物通过了当时 `check-final-html.mjs` 的全部检查，但正文只有约 2.6k 中文——图占了 90% 的体积，内容几乎是空的。**"打得开"和"讲得清楚"是两件事。** 内容深度门禁的通过样例见 `examples/content-depth-pass-sample.html`（改之前先照着它的结构写），规范要求见 `references/12-content-depth-gate.md`。
 
@@ -115,7 +115,8 @@ code2biz/
 │   ├── 09-glossary-tooltips.md
 │   ├── 10-build-approach.md
 │   ├── 11-architecture-and-flow.md    # R5 流程五维度 / R6 架构五问 / R7 节点标注
-│   └── 12-content-depth-gate.md       # R9 内容深度可验证 / R10 占位符零容忍 / R11 转义
+│   ├── 12-content-depth-gate.md       # R9 内容深度可验证 / R10 占位符零容忍 / R11 转义（R12/R13 检查落点）
+│   └── 13-business-deep-reading.md    # R12 状态业务化 / R13 流程四层拆解 / 企业级业务解读与术语四段式
 ├── examples/
 │   ├── content-depth-pass-sample.html # 内容深度门禁的通过样例，也是最终 HTML 的结构骨架
 │   ├── coverage-report.sample.json

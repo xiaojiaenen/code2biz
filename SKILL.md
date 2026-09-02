@@ -65,6 +65,8 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 - 交付前跑内容深度门禁，或想知道"业务讲清楚了没有"的机器判定标准 → 读 `references/12-content-depth-gate.md`，配套样例 `examples/content-depth-pass-sample.html`
 
+- 状态机要写成 `unknown → running` 这种裸流转？主流程嵌套子流程不知道怎么分层？分析 WMS/ERP 这类术语密集的企业系统？→ 读 `references/13-business-deep-reading.md`（R12 状态业务化 / R13 流程四层拆解 / 企业级业务解读与术语四段式）
+
 - 微服务/多仓库、涉及多个业务域 → 先读 `references/08-domain-segmentation.md`，域边界要在 Phase 1 之前定下来
 
 - 代码有变更，更新已有文档 → 只读 `references/04-incremental-update.md`
@@ -90,7 +92,7 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 在写任何一句业务文档之前，先用工具（grep/AST 分析/schema 读取，能用脚本做的不要让模型"读一遍猜"）提取：
 
 1. **领域模型**：ORM 实体定义 / DDL / 表结构注释 → 实体、字段、关系
-2. **状态机**：枚举定义 + 所有对该字段赋值的代码路径 → 状态迁移表（要基于控制流事实，不是猜的）
+2. **状态机**：枚举定义 + 所有对该字段赋值的代码路径 → 状态迁移表（要基于控制流事实，不是猜的）。**迁移必须业务化（R12）**：每条迁移带触发者、业务动作、业务意义，每个状态带业务定义——交付单位是"任务创建/资源占用/执行下发/完成回执"这类业务动作，不是 `unknown → running` 式的字面量流转；`unknown` 这类字面量状态必须解释成因，解释不了标待确认。细节见 `references/13-business-deep-reading.md`
 3. **业务规则**：if-else 条件分支、配置阈值、灰度开关 → 条件表达式 + 数值边界原文
 4. **术语映射**：跨模块/跨仓库的类名、字段名、注释 → 同义词聚类
 
@@ -160,7 +162,13 @@ Phase 6  增量同步 / 人工确认层   git diff 增量更新（按需触发�
 
 - **小业务有没有被一句话带过**（R9）：跑 `node scripts/check-content-depth.mjs` 时带上 `--coverage` 和 `--entries`。`recorded` 占比超过 50%、或某条 recorded 的业务说明不足 60 字符，都是"漏讲业务"的信号——漏业务的地方从来不是主流程，是这些"看起来不重要"的角落
 
-- **内容深度门禁**：`node scripts/check-content-depth.mjs <final.html>` 的 error 项是否已清零。规则总表（R1-R11）见 `references/12-content-depth-gate.md` 末尾
+- **内容深度门禁**：`node scripts/check-content-depth.mjs <final.html>` 的 error 项是否已清零。规则总表（R1-R13）见 `references/12-content-depth-gate.md` 末尾
+
+- **状态机是不是裸流转**（R12）：每台状态机有 `data-sm` 标记、状态业务定义表（`data-sm-state`）、迁移业务含义行（`data-sm-tx`，含触发者+业务动作+业务意义+代码位置）。出现 `unknown → running` 这种只有字面量的迁移就是不合格——读者要的是"这个流转在业务世界里发生了什么"
+
+- **主流程有没有拆到子流程**（R13）：`data-level="main"` 的流程至少有一个 `data-level="sub"` 子流程，子流程带调用链（file:line）和"抽掉它整体业务断在哪"的职责说明。多主流程嵌套的微服务系统按 系统级→主流程→子流程→关键方法 四层交付，见 `references/13-business-deep-reading.md` §2
+
+- **输出结构是不是 wiki 级**：对照 `references/06-output-structure-and-map.md` v2 的 14 章结构，核心章节（背景/术语/架构/数据模型/流程分层/入口调用链/待确认）缺席会被 R9-9 点名；小型项目省略章节要在文档信息页写明原因
 
 - **最终产物是不是一个能直接双击打开的单文件** **`.html`**，而不是散落的 Markdown/多个 artifact 链接
 

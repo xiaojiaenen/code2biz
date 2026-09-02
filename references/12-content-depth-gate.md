@@ -1,7 +1,8 @@
-# 内容深度门禁（R9 / R10 / R11 集中实现）
+# 内容深度门禁（R9 / R10 / R11 + R12/R13 的检查落点）
 
-> 这份参考解决一个具体的事故：**规则写得极细，但没有一个脚本检查它，于是规则不是约束，只是愿望。**
+> 这份参考解决一个被 Russh 实测暴露的事故：**规则写得极细，但没有一个脚本检查它，于是规则不是约束，只是愿望。**
 > 配套脚本：`scripts/check-content-depth.mjs`。可运行的通过样例：`examples/content-depth-pass-sample.html`。
+> R12（状态流转业务化）/ R13（流程四层拆解）的规则本体在 `references/13-business-deep-reading.md`，本文件收录它们的检查约定。
 
 ## 0. 先看数据：为什么需要这一层
 
@@ -47,6 +48,11 @@ Russh 项目实测产物（`test-instance/russh-business-docs.html`，356 KB）�
 | `data-entry-id="<id>"` + `data-entry-status="recorded"` | 入口点表里的每一行 | recorded 行 **60** | R9-4 |
 | `class="entry-business"` | recorded 行的业务说明单元格 | **60** | R9-4 |
 | `data-rule="<规则名>"` | 规则手册里每条规则的容器 | 需含源码位置 | R9-6 |
+| `data-sm="<状态机名>"` | 每台状态机的章节容器 | 状态定义 + 迁移含义 | R9-7 |
+| `data-sm-state="<状态字面量>"` | 状态业务定义表的每一行 | **20** | R9-7 |
+| `data-sm-tx="<from->to>"` | 迁移业务含义表的每一行（含 `class="sm-biz"` 单元格） | **40** + 业务动词 + 源码位置 | R9-7 |
+| `data-level="system\|main\|sub\|method"` | 流程分层标记（R13 四层） | sub 需 ≥30 字符职责 | R9-8 |
+| `data-subflow="<子流程名>"` | 子流程容器，与 data-level="sub" 同用 | 需含调用链（file:line） | R9-8 |
 
 `data-r6` 的五个 key：`topology` / `purpose` / `responsibility` / `dependency` / `assessment`。
 `data-r5` 的五个 key：`main` / `branch` / `exception` / `data` / `permission`。
@@ -224,6 +230,11 @@ node scripts/check-final-html.mjs <final.html>
 | recorded 占比 X% 超过 50% | 分类粒度太粗 | 把成组的按资源分组展开，或把确实复杂的改成 detailed |
 | 清单里有 N 条 recorded 在文档里找不到 | 文档里根本没这一节 | 补第 07 章入口点清单，每条都带 `data-entry-id` |
 | 占位文本【未单列】出现 N 次 | 生成器没解析出触发条件 | 回代码里查这 N 条的真实触发条件；查不到就标 flagged 进第 06 章 |
+| 没有任何 data-sm，正文有 N 处裸字面量流转 | 状态机整章只有 `unknown → running` 式罗列 | 按 references/13 §1 补状态业务定义表与迁移七列表，每条迁移带 data-sm-tx |
+| 状态机「X」的状态「Y」业务定义只有 N 字符 | 复述状态名凑数 | 按"谁让它进入/此刻业务世界里什么是真的/离开意味着什么"三问重写；解释不了标待确认，禁止照抄字面量 |
+| 状态机「X」的迁移「Y」没有业务动词 | 只写了状态字面量和事件名 | 补 biz_action（任务创建/资源占用/执行下发/完成回执…词表见 references/13 §1.3）与 biz_meaning |
+| 流程「X」标注 main 层却没有 sub 子流程 | 只有主流程概述没有环节拆解 | 按 references/13 §2.1 把主流程切分成可独立命名的业务环节，每个加 data-level="sub" |
+| 子流程「X」没有调用链 | 凭目录结构猜的流程 | 用 codegraph callers/callees 取真实调用路径写进 data-subflow 内容 |
 | 发现 N 处双重转义 | 转义链路重复转义 | 找到生成器里 escape 了两次的那一行；R1 已禁 srcdoc，该链路多半是历史残留 |
 | 没有任何 data-r6 / data-r5 标记 | 没按约定写 | 照 `examples/content-depth-pass-sample.html` 补结构 |
 
@@ -239,14 +250,14 @@ node scripts/check-final-html.mjs <final.html>
 
 ---
 
-## 6. 硬性规则总表（R1-R11）
+## 6. 硬性规则总表（R1-R13）
 
 | 编号 | 规则 | 落地文档 | 检查脚本 |
 |---|---|---|---|
 | R1 | 无 iframe，所有图原生内联 | `07-single-html-packaging.md` | `check-final-html.mjs` |
 | R2 | 符号级交叉校验（codegraph），工具缺失要如实标注 | `01-extraction.md` | `check-content-depth.mjs`（R9-6 规则可追溯） |
 | R3 | 业务解读 ≥70% / 技术实现 ≤30% | `02-synthesis-checklist.md` | 人工抽检 |
-| R4 | 术语三段式（字面定义 / 白话 / 业务场景） | `02-synthesis-checklist.md`、`09-glossary-tooltips.md` | — |
+| R4 | 术语三段式（字面定义 / 白话 / 业务场景）；企业系统升级四段式（+代码位置） | `02-synthesis-checklist.md`、`09-glossary-tooltips.md`、`13-business-deep-reading.md` §3.2 | — |
 | R5 | 流程五维度（主 / 分支 / 异常 / 数据 / 权限） | `02`、`11` | **`check-content-depth.mjs`（R9-3）** |
 | R6 | 架构拆解五问 | `02`、`11` | **`check-content-depth.mjs`（R9-2）** |
 | R7 | 图谱节点标准化标注 + 图下方业务解读 | `11`、`07a` | **`check-content-depth.mjs`（R9-1）** |
@@ -254,6 +265,8 @@ node scripts/check-final-html.mjs <final.html>
 | **R9** | **内容深度可验证：R5/R6/R7/R8 必须有机器可定位的落点** | **本文件** | **`check-content-depth.mjs`** |
 | **R10** | **占位符零容忍** | **本文件** | **`check-content-depth.mjs`** |
 | **R11** | **实体转义正确，正文不得出现双重转义** | **本文件** | **两个脚本都查** |
+| **R12** | **状态流转业务化：状态有业务定义、迁移有触发者/业务动作/业务意义，禁止裸字面量流转** | **`13-business-deep-reading.md` §1** | **`check-content-depth.mjs`（R9-7）** |
+| **R13** | **流程四层拆解：系统级→主流程→子流程→关键方法，带层级/调用链/分支条件/子流程职责** | **`13-business-deep-reading.md` §2** | **`check-content-depth.mjs`（R9-8）** |
 
-> R9/R10/R11 是这次新增的。它们不改变 R5/R6/R7 的任何要求，只是**给它们装上牙齿**。
-> 之前 R5/R6/R7 也写得一样细，实测产物照样跳过且无人拦截——差别就在这一层。
+> R9/R10/R11 是给 R5/R6/R7 装牙齿（"写没写"），R12/R13 是给它们装准星（"写的东西有没有业务含义"）。
+> R9-9 另以 warn 级核对 references/06 v2 的 wiki 结构核心章节是否缺席。

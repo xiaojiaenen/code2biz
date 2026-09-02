@@ -22,6 +22,30 @@
 </head>
 <body>
 
+<!-- ============ 00 业务背景概述（wiki 第 01 章，R13 系统级视角） ============ -->
+<section id="business-background" data-section="business-background">
+  <h2>00 业务背景概述</h2>
+  <p>Russh 解决的问题是：Ansible 手工运维动作散在各个老师傅的终端历史里，同一套 playbook
+    谁执行、什么时候执行、执行到哪一步全靠口头同步，出问题无法回溯。本系统把"对哪批主机、
+    跑哪个 playbook、每一步成败"变成数据库里可查、可重试、可审计的任务记录。
+    服务对象是运维团队（发起与补跑部署）和管理层（看授权用量与部署成功率）。
+    业务体量是千级任务/天、十级集群（来自配置与注释线索）。它处在运维工具链的执行层：
+    上游是变更审批（不在本仓库，系统边界章节交代），下游是被纳管的集群主机。</p>
+</section>
+
+<!-- ============ 02 核心概念与术语表（术语四段式：字面/白话/位置/代码） ============ -->
+<section id="glossary" data-section="glossary">
+  <h2>02 核心概念与术语表</h2>
+  <div class="term">
+    <h3>任务（deploy task）</h3>
+    <p><strong>白话</strong>：一次"对这批机器跑这套脚本"的完整尝试，是运维工作的基本单位——
+      不是执行一个命令，而是带着目标、步骤和状态的一条业务记录。
+      <strong>位置</strong>：处在"变更审批通过之后、步骤执行之前"，一个任务拆 N 个步骤。
+      <strong>代码对应</strong>：表 <code>deploy_tasks</code>，状态字段
+      <code>deploy_tasks.status</code>，创建入口 <code>api/deploy.py:execute_deploy</code>。</p>
+  </div>
+</section>
+
 <!-- ============ 01 整体架构（R6 五问） ============ -->
 <section id="architecture" data-section="architecture">
   <h2>01 整体架构</h2>
@@ -113,8 +137,8 @@
 <section id="flows" data-section="flows">
   <h2>03 核心流程</h2>
 
-  <section class="flow" data-flow="deploy">
-    <h3>部署主链路</h3>
+  <section class="flow" data-flow="deploy" data-level="main">
+    <h3>部署主链路（R13 层级：主流程）</h3>
 
     <div class="flow-dim" data-r5="main">
       <h4>主流程</h4>
@@ -161,7 +185,76 @@
         设计目的是防止运维 A 误重试运维 B 正在处理的任务造成重复执行。
         鉴权失败的业务后果是接口直接返回 403 且不产生任务记录，不写入审计日志——这一点需要补。</p>
     </div>
+
+    <!-- R13 子流程：层级归属 / 职责一句话 / 调用链 / 分支条件 -->
+    <div class="subflow" data-level="sub" data-subflow="任务创建与分发">
+      <h4>子流程：任务创建与分发 —— 职责：把一次部署意图变成带步骤清单的可调度任务，
+        抽掉它运维动作就退回到手工跑 playbook，没有状态、没有重试、没有审计</h4>
+      <p>调用链：<code>api/deploy.py:execute_deploy → core/deploy_executor.py:start_deploy →
+        core/deploy_executor.py:enqueue</code>。分支条件：按目标主机组件状态分支——
+        全新主机生成 install+config 两步，已装组件只生成 config 一步
+        （<code>api/deploy.py:64</code>）；按触发来源分支——手动触发要求 operator 角色，
+        定时巡检用系统身份跳过二次确认。</p>
+      <p>关键方法 <code data-level="method">enqueue</code>：入参是任务 ID，
+        行为是把任务丢进全局线程池（并发上限 2）并立即返回——返回时任务还没开始跑，
+        只是"已受理"。这就是任务存在 pending 状态的原因：创建和执行在业务上是两个时刻。</p>
+    </div>
   </section>
+</section>
+
+<!-- ============ 05 状态机：部署任务状态机（R12 业务化） ============ -->
+<section id="sm-deploy" data-section="sm-deploy" data-sm="部署任务状态机">
+  <h2>05 部署任务状态机（状态业务化交付）</h2>
+
+  <!-- R12 状态业务定义表：每个状态先回答"此刻业务世界里什么是真的" -->
+  <table>
+    <caption>状态业务定义</caption>
+    <tr data-sm-state="pending"><td>pending</td><td>已受理未开工：任务记录已落库、步骤已拆分，但调度器尚未认领——此刻不占用并发槽位，取消无任何代价。</td></tr>
+    <tr data-sm-state="running"><td>running</td><td>执行中：已占用并发槽位（上限 2），Ansible 子进程正在对目标主机产生真实变更——此刻可取消但不可删除。</td></tr>
+    <tr data-sm-state="partial"><td>partial</td><td>部分成功：部分主机完成、部分被跳过——意味着需要人工补跑，被跳过的主机仍停留在旧版本。</td></tr>
+    <tr data-sm-state="success"><td>success</td><td>全部完成：所有步骤回执成功——意味着目标集群已与新版本一致，任务只读。</td></tr>
+    <tr data-sm-state="failed"><td>failed</td><td>失败终止：某步触发硬性失败中断后续——已完成步骤不回滚，从失败步人工续跑。</td></tr>
+  </table>
+
+  <!-- R12 迁移业务含义表：触发者 + 业务动作 + 业务意义 + 代码位置 -->
+  <table>
+    <caption>迁移业务含义</caption>
+    <tr data-sm-tx="pending->running"><td>pending → running</td>
+      <td class="sm-biz">触发者：调度器线程从线程池认领（core/deploy_executor.py:118）。
+        业务动作：执行下发——占用并发槽位、按步骤清单逐台拉起 Ansible 子进程。
+        业务意义：任务从"排队等槽位"进入"实际影响目标主机"阶段，取消要杀子进程而非删记录。</td></tr>
+    <tr data-sm-tx="running->success"><td>running → success</td>
+      <td class="sm-biz">触发者：执行器主循环在最后一个步骤回执成功时（core/deploy_executor.py:203）。
+        业务动作：完成回执——登记全部步骤耗时并把任务置为终态、通过 WebSocket 通知前端刷新。
+        业务意义：目标集群版本已收敛，该任务从运维工作集移除，只剩审计价值。</td></tr>
+    <tr data-sm-tx="running->failed"><td>running → failed</td>
+      <td class="sm-biz">触发者：任一步骤返回非零退出码且该步骤标记 break-on-fail（core/deploy_executor.py:187）。
+        业务动作：失败登记——杀掉残留子进程、后续步骤保持 pending、记录失败步序号供续跑。
+        业务意义：变更未完成，集群处于"部分新版本"混合态，是排障和补跑的输入。</td></tr>
+  </table>
+</section>
+
+<!-- ============ 05b 数据模型与单据流转（wiki 第 05 章） ============ -->
+<section id="data-model" data-section="data-model">
+  <h2>05b 数据模型与单据流转</h2>
+  <p>核心单据只有一张：<strong>部署任务单</strong>（deploy_tasks + 子表 deploy_steps）。
+    它的生命周期就是"部署意图 → 执行凭据 → 审计记录"三段：创建时是意图（pending），
+    执行时是凭据（running，凭它可以判断哪台机器被动过），终态后是审计记录（保留 90 天）。
+    与实物流的对应关系：任务单的每个步骤对应目标主机上一次真实的 playbook 执行，
+    step 状态是"这台机器被改到了哪一步"的唯一真相来源。</p>
+</section>
+
+<!-- ============ 12 结论与待确认清单（wiki 第 12 章） ============ -->
+<section id="pending" data-section="pending">
+  <h2>12 结论与待确认清单</h2>
+  <h3>结论摘要</h3>
+  <p>Russh 是一个单体运维执行系统，核心价值是把 Ansible 手工动作变成可审计的任务记录；
+    当前健康度中等——功能完整但有两个结构性隐患（执行器单点、并发上限写死），
+    最大的三个风险：Web 重启导致任务卡 running、百级步骤查询变慢、异常不触发告警。</p>
+  <h3>待确认清单</h3>
+  <ul>
+    <li>❓ partial 终态是否需要自动补跑策略，代码中未见定时重试逻辑，疑似依赖人工（needs_confirmation）。</li>
+  </ul>
 </section>
 
 <!-- ============ 04 规则手册 ============ -->
